@@ -1,0 +1,13 @@
+# Claude Code 本機設定
+.claude/
+
+# 備份匯出檔
+吹牛王投注備份-*.json
+
+# OneDrive / Windows 雜物
+desktop.ini
+Thumbs.db
+~$*
+
+# macOS
+.DS_Store
