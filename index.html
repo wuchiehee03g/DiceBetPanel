@@ -292,6 +292,31 @@
     background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
     border-radius:4px;padding:7px;font-size:12px;width:100%;
   }
+  .admin-hint{font-size:11.5px;color:var(--ivory-dim);line-height:1.6;margin:8px 0 0;}
+  .admin-hint b{color:var(--gold-bright);}
+  #seriesSettle{display:flex;flex-direction:column;gap:8px;}
+  #seriesSettle select{
+    background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+    border-radius:4px;padding:9px;font-size:12.5px;font-family:inherit;
+  }
+  #seriesSettle .series-list{font-size:11.5px;color:var(--ivory-dim);line-height:1.7;}
+  #seriesSettle .series-list li{margin-left:-8px;}
+  #seriesSettle button{
+    background:var(--gold);color:#14110d;border:none;border-radius:4px;
+    padding:9px;font-weight:700;cursor:pointer;font-family:'Oswald',sans-serif;letter-spacing:0.5px;
+  }
+  #seriesSettle button:disabled{opacity:0.4;cursor:not-allowed;}
+  #addRosterForm{display:flex;flex-direction:column;gap:8px;}
+  #addRosterForm input{
+    background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+    border-radius:4px;padding:9px;font-size:12.5px;
+  }
+  #addRosterForm button{
+    background:transparent;border:1px solid var(--gold);color:var(--gold-bright);
+    border-radius:4px;padding:9px;font-weight:700;cursor:pointer;
+    font-family:'Oswald',sans-serif;letter-spacing:0.5px;
+  }
+  #addRosterForm button:hover{background:rgba(201,162,39,0.15);}
   #addMarketForm{display:flex;flex-direction:column;gap:8px;}
   #addMarketForm input{
     background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
@@ -376,6 +401,20 @@
       <div>
         <h3>16 位玩家名單</h3>
         <div id="playerEditor"></div>
+      </div>
+      <div>
+        <h3>總冠軍系列盤（分階段獨立彩池）</h3>
+        <form id="addRosterForm">
+          <input id="newRosterTitle" placeholder="盤口名稱，例如：總冠軍 · 八強前" required maxlength="80">
+          <button type="submit">用 16 人名單開新盤</button>
+        </form>
+        <p class="admin-hint">
+          每階段開一個獨立盤口，各自算自己的彩池。同一個冠軍結果決定全部，
+          但賽前盤的賠率不會被後面階段的錢稀釋。
+          <b>開新階段盤時記得把上一階段的盤「封盤」。</b>
+        </p>
+        <h3 style="margin-top:18px;">一次結算所有總冠軍系列盤</h3>
+        <div id="seriesSettle"></div>
       </div>
       <div>
         <h3>新增特別投注盤口</h3>
@@ -601,11 +640,21 @@ function betOutcome(bet){
   return { status:'win', label:'中獎', payout, profit: payout - bet.amount, market, info };
 }
 
+// 選項 id 是 p0..p15 的盤口＝用 16 人名單當選項（總冠軍系列盤）。
+// 這類盤的選項標籤跟著玩家名單走，改名會自動同步。
+function usesPlayerRoster(market){
+  return market.options.length > 0 && market.options.every(o=>{
+    if(!/^p\d+$/.test(o.id)) return false;
+    const i = parseInt(o.id.slice(1), 10);
+    return i >= 0 && i < PLAYER_COUNT;
+  });
+}
+
 function optionLabel(market, opt){
   if(!opt) return '—';
-  if(market.group === 'main' && /^p\d+$/.test(opt.id)){
+  if(/^p\d+$/.test(opt.id)){
     const idx = parseInt(opt.id.slice(1), 10);
-    return state.players[idx] || opt.id;
+    if(idx >= 0 && idx < PLAYER_COUNT) return state.players[idx] || opt.id;
   }
   return opt.label || opt.id;
 }
@@ -683,6 +732,7 @@ function render(){
   renderTabs();
   renderBody();
   renderPlayerEditor();
+  renderSeriesSettle();
   const slider = document.getElementById('rakeSlider');
   if(document.activeElement !== slider){
     slider.value = Math.round(state.rake * 100);
@@ -837,7 +887,7 @@ function renderMarketCard(market){
         </select>
         <button data-settle-btn="${market.id}">結算並派彩</button>
       `}
-      ${market.group === 'prop' ? `<button class="del-btn" data-del-btn="${market.id}">刪除盤口</button>` : ''}
+      ${market.id === 'champion' ? '' : `<button class="del-btn" data-del-btn="${market.id}">刪除盤口</button>`}
     </div>`;
 
   return `
@@ -1081,7 +1131,7 @@ async function undoSettle(marketId){
 async function deleteMarket(marketId){
   const market = state.markets.find(m=>m.id === marketId);
   if(!market) return;
-  if(market.group !== 'prop'){ showToast('總冠軍盤不能刪除'); return; }
+  if(market.id === 'champion'){ showToast('主總冠軍盤不能刪除'); return; }
 
   const related = state.bets.filter(b=>b.marketId === marketId);
   const total   = marketTotal(market);
@@ -1106,6 +1156,69 @@ async function deleteMarket(marketId){
     await db.ref(DB_PATH).update(updates);
     showToast(related.length ? `盤口與 ${related.length} 筆注單已刪除` : '盤口已刪除');
   }catch(e){ showToast('刪除失敗：' + String(e).slice(0,60)); }
+}
+
+/* ---------- 總冠軍系列盤：一次結算 ----------
+   分階段開盤後會有多個總冠軍盤，同一個冠軍結果決定全部。
+   一個一個結算容易漏掉或選錯人，所以提供批次結算。 */
+function renderSeriesSettle(){
+  const el = document.getElementById('seriesSettle');
+  const targets = state.markets.filter(m => !m.settled && usesPlayerRoster(m));
+  if(targets.length === 0){
+    el.innerHTML = `<div class="series-list">目前沒有未結算的總冠軍系列盤。</div>`;
+    return;
+  }
+  const prev = (document.getElementById('seriesWinner') || {}).value || '';
+  el.innerHTML = `
+    <select id="seriesWinner">
+      <option value="">選擇冠軍...</option>
+      ${state.players.map((p,i)=>`<option value="p${i}"${prev==='p'+i?' selected':''}>${esc(p)}</option>`).join('')}
+    </select>
+    <div class="series-list">會一次結算這 ${targets.length} 個盤口：
+      <ul>${targets.map(m=>`<li>${esc(m.title)}（總池 $${fmt(marketTotal(m))}）</li>`).join('')}</ul>
+    </div>
+    <button type="button" id="seriesSettleBtn">全部結算</button>`;
+  document.getElementById('seriesSettleBtn').onclick = settleSeries;
+}
+
+async function settleSeries(){
+  const sel = document.getElementById('seriesWinner');
+  const winnerId = sel && sel.value;
+  if(!winnerId){ showToast('請先選擇冠軍'); return; }
+
+  const targets = state.markets.filter(m => !m.settled && usesPlayerRoster(m));
+  if(targets.length === 0){ showToast('沒有可結算的盤口'); return; }
+
+  const name = state.players[parseInt(winnerId.slice(1), 10)];
+  const lines = targets.map(m=>{
+    const info = settleInfo({ ...m, winnerId, rakeAtSettle: state.rake });
+    const desc = {
+      empty:       '無人下注',
+      refund:      `作廢退款 $${fmt(info.total)}`,
+      'no-winner': `無人押中，$${fmt(info.total)} 歸莊`,
+      paid:        `${info.odds.toFixed(2)}x，派彩 $${fmt(info.total*(1-info.rake))}`,
+    }[info.mode];
+    return `· ${m.title}：${desc}`;
+  });
+
+  if(!confirm(
+    `確定以「${name}」一次結算下列 ${targets.length} 個總冠軍系列盤？\n\n` +
+    `${lines.join('\n')}\n\n` +
+    `抽水 ${Math.round(state.rake*100)}%。結算後無法再下注，但每個盤都還可以個別「撤銷結算」。`
+  )) return;
+
+  const updates = {};
+  targets.forEach(m=>{
+    updates[`markets/${m.id}/settled`]      = true;
+    updates[`markets/${m.id}/winnerId`]     = winnerId;
+    updates[`markets/${m.id}/rakeAtSettle`] = state.rake;
+    updates[`markets/${m.id}/locked`]       = true;
+  });
+
+  try{
+    await db.ref(DB_PATH).update(updates);
+    showToast(`已一次結算 ${targets.length} 個盤口`);
+  }catch(e){ showToast('批次結算失敗：' + String(e).slice(0,60)); }
 }
 
 /* ---------- 管理 ---------- */
@@ -1140,6 +1253,29 @@ document.getElementById('rakeSlider').addEventListener('change', async (e)=>{
   const v = parseInt(e.target.value, 10) / 100;
   try{ await db.ref(`${DB_PATH}/rake`).set(v); }
   catch(err){ showToast('抽水設定失敗：' + String(err).slice(0,60)); }
+});
+
+document.getElementById('addRosterForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const title = document.getElementById('newRosterTitle').value.trim();
+  if(!title) return;
+  const options = {};
+  for(let i=0;i<PLAYER_COUNT;i++) options['p'+i] = { order:i };
+  try{
+    await db.ref(`${DB_PATH}/markets`).push({
+      title,
+      desc:'獨立彩池，與其他階段的總冠軍盤分開計算',
+      group:'main',
+      order: Date.now(),          // champion 的 order 是 0，新階段盤排在後面
+      locked:false, settled:false, winnerId:null,
+      options
+    });
+    document.getElementById('newRosterTitle').value = '';
+    activeTab = 'main';
+    try{ localStorage.setItem(TAB_KEY, activeTab); }catch(err){}
+    showToast('已開新的總冠軍系列盤');
+    render();
+  }catch(err){ showToast('開盤失敗：' + String(err).slice(0,60)); }
 });
 
 document.getElementById('addMarketForm').addEventListener('submit', async (e)=>{
