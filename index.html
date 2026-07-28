@@ -261,6 +261,11 @@
   .settle-bar button:hover{background:rgba(201,162,39,0.15);}
   .settle-bar button.lock-btn{border-color:var(--red-bright);color:var(--red-bright);}
   .settle-bar button.lock-btn:hover{background:rgba(154,51,36,0.18);}
+  .settle-bar button.undo-btn{border-color:var(--ivory-dim);color:var(--ivory-dim);}
+  .settle-bar button.undo-btn:hover{background:rgba(236,228,211,0.1);color:var(--ivory);}
+  .settle-bar button.del-btn{border-color:var(--red-bright);color:var(--red-bright);margin-left:auto;}
+  .settle-bar button.del-btn:hover{background:rgba(154,51,36,0.25);}
+  @media(max-width:560px){ .settle-bar button.del-btn{margin-left:0;} }
 
   .ledger{width:100%;border-collapse:collapse;margin-top:10px;font-size:12.5px;}
   .ledger th,.ledger td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line);}
@@ -820,14 +825,19 @@ function renderMarketCard(market){
     banner = `<div class="lock-note">🔒 此盤已封盤，暫停下注。等主持人公布結果後結算。</div>`;
   }
 
-  const settleControls = market.settled ? '' : `
+  const settleControls = `
     <div class="settle-bar">
-      <button class="lock-btn" data-lock-btn="${market.id}">${market.locked?'重新開盤':'封盤'}</button>
-      <select data-settle-select="${market.id}">
-        <option value="">選擇正確結果...</option>
-        ${market.options.map(o=>`<option value="${o.id}">${esc(optionLabel(market,o))}</option>`).join('')}
-      </select>
-      <button data-settle-btn="${market.id}">結算並派彩</button>
+      ${market.settled ? `
+        <button class="undo-btn" data-undo-btn="${market.id}">撤銷結算</button>
+      ` : `
+        <button class="lock-btn" data-lock-btn="${market.id}">${market.locked?'重新開盤':'封盤'}</button>
+        <select data-settle-select="${market.id}">
+          <option value="">選擇正確結果...</option>
+          ${market.options.map(o=>`<option value="${o.id}">${esc(optionLabel(market,o))}</option>`).join('')}
+        </select>
+        <button data-settle-btn="${market.id}">結算並派彩</button>
+      `}
+      ${market.group === 'prop' ? `<button class="del-btn" data-del-btn="${market.id}">刪除盤口</button>` : ''}
     </div>`;
 
   return `
@@ -941,6 +951,12 @@ function attachMarketHandlers(markets){
   document.querySelectorAll('[data-lock-btn]').forEach(btn=>{
     btn.onclick = ()=> toggleLock(btn.dataset.lockBtn);
   });
+  document.querySelectorAll('[data-undo-btn]').forEach(btn=>{
+    btn.onclick = ()=> undoSettle(btn.dataset.undoBtn);
+  });
+  document.querySelectorAll('[data-del-btn]').forEach(btn=>{
+    btn.onclick = ()=> deleteMarket(btn.dataset.delBtn);
+  });
 }
 
 /* ---------- 下注：單純 append，天生不會互相覆蓋 ---------- */
@@ -1024,6 +1040,72 @@ async function settleMarket(marketId){
     });
     showToast('已結算並派彩！');
   }catch(e){ showToast('結算失敗：' + String(e).slice(0,60)); }
+}
+
+/* ---------- 撤銷結算 ----------
+   派彩是從帳本推導出來的，沒有寫死成欄位，所以撤銷不需要反向解開任何
+   已發出的派彩——把結算狀態清掉，數字自然回到未開盤的樣子，注單全部保留。 */
+async function undoSettle(marketId){
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market || !market.settled) return;
+
+  const info   = settleInfo(market);
+  const winOpt = market.options.find(o=>o.id === market.winnerId);
+  const detail = {
+    paid:        `原本判定：${optionLabel(market, winOpt)}（賠率 ${info.odds.toFixed(2)}x，派彩 $${fmt(info.total*(1-info.rake))}）`,
+    refund:      `原本判定：${optionLabel(market, winOpt)}（作廢退款）`,
+    'no-winner': `原本判定：${optionLabel(market, winOpt)}（無人押中，彩池歸莊）`,
+    empty:       `原本判定：${optionLabel(market, winOpt)}（無人下注）`,
+  }[info.mode];
+
+  if(!confirm(
+    `確定撤銷「${market.title}」的結算？\n\n${detail}\n\n` +
+    `撤銷後派彩作廢，盤口回到未結算狀態，${state.bets.filter(b=>b.marketId===marketId).length} 筆注單全部保留。\n` +
+    `盤口會維持封盤，要重新收注請再按「重新開盤」。`
+  )) return;
+
+  try{
+    await db.ref(`${DB_PATH}/markets/${marketId}`).update({
+      settled: false,
+      winnerId: null,      // Firebase 寫 null 等於移除該欄位
+      rakeAtSettle: null,
+      locked: true         // 不要一撤銷就馬上開放下注
+    });
+    showToast('已撤銷結算，盤口維持封盤');
+  }catch(e){ showToast('撤銷失敗：' + String(e).slice(0,60)); }
+}
+
+/* ---------- 刪除自訂盤口 ----------
+   帳本是唯一真實來源，所以刪盤口一定要連同它的注單一起刪，否則會留下
+   對不到盤口的孤兒注單。用一次 multi-path update 原子性完成。 */
+async function deleteMarket(marketId){
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market) return;
+  if(market.group !== 'prop'){ showToast('總冠軍盤不能刪除'); return; }
+
+  const related = state.bets.filter(b=>b.marketId === marketId);
+  const total   = marketTotal(market);
+
+  if(!confirm(
+    `確定刪除盤口「${market.title}」？\n\n` +
+    (related.length
+      ? `這盤有 ${related.length} 筆注單、總池 $${fmt(total)}，會一併永久刪除。\n`
+      : `這盤還沒有人下注。\n`) +
+    `無法復原。`
+  )) return;
+
+  if(related.length && !confirm(
+    `再確認一次：${related.length} 筆注單（共 $${fmt(total)}）會被刪掉，無法復原。\n\n` +
+    `如果只是想停止收注，按「取消」後改用「封盤」。`
+  )) return;
+
+  const updates = { [`markets/${marketId}`]: null };
+  related.forEach(b=>{ updates[`bets/${b.id}`] = null; });
+
+  try{
+    await db.ref(DB_PATH).update(updates);
+    showToast(related.length ? `盤口與 ${related.length} 筆注單已刪除` : '盤口已刪除');
+  }catch(e){ showToast('刪除失敗：' + String(e).slice(0,60)); }
 }
 
 /* ---------- 管理 ---------- */
