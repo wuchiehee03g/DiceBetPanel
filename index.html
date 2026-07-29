@@ -182,6 +182,34 @@
   }
   .chip.lock{background:rgba(154,51,36,0.3);border:1px solid var(--red-bright);color:var(--red-bright);}
   .chip.done{background:rgba(201,162,39,0.2);border:1px solid var(--gold);color:var(--gold-bright);}
+  .chip.book{background:rgba(122,162,247,0.18);border:1px solid #7aa2f7;color:#a9c1ff;}
+
+  .market-card.book::before{background:linear-gradient(90deg,#7aa2f7,transparent 70%);}
+  .banker-line{
+    font-size:11.5px;color:var(--ivory-dim);line-height:1.6;
+    background:rgba(122,162,247,0.09);border-left:2px solid #7aa2f7;
+    padding:6px 10px;border-radius:4px;margin:2px 0 10px;
+  }
+  .banker-line b{color:#a9c1ff;}
+  .odds-edit{display:flex;align-items:center;gap:7px;margin-top:6px;flex-wrap:wrap;}
+  .odds-edit label{font-size:11px;color:var(--ivory-dim);letter-spacing:0.5px;}
+  .odds-edit input{
+    background:#0d0b08;border:1px solid #7aa2f7;color:#a9c1ff;
+    border-radius:4px;padding:6px 8px;font-size:13px;width:78px;
+    font-family:'JetBrains Mono',monospace;font-weight:700;
+  }
+  .odds-note{font-size:10.5px;color:var(--ivory-dim);opacity:0.8;}
+  .banker-risk{
+    margin-top:12px;padding:10px 12px;border-radius:5px;
+    background:rgba(122,162,247,0.07);border:1px solid rgba(122,162,247,0.3);
+  }
+  .banker-risk .br-title{
+    font-size:11.5px;color:#a9c1ff;letter-spacing:0.5px;font-weight:700;margin-bottom:4px;
+  }
+  .banker-risk .br-empty{font-size:12px;color:var(--ivory-dim);}
+  .banker-risk .ledger{margin-top:4px;}
+  .banker-risk .ledger td{padding:4px 8px;font-size:12px;}
+  .banker-risk tr.br-worst td{border-top:1px solid rgba(122,162,247,0.35);border-bottom:none;}
   .winner-banner{
     background:rgba(201,162,39,0.15);
     border:1px solid var(--gold);
@@ -372,6 +400,7 @@
     <div class="house-controls">
       <label>莊家抽水比例 <span id="rakeVal">7%</span></label>
       <input type="range" id="rakeSlider" min="5" max="10" step="1" value="7">
+      <div style="font-size:10.5px;color:var(--ivory-dim);margin-top:5px;line-height:1.5;">只作用在彩池盤。莊家盤不抽水。</div>
     </div>
   </header>
 
@@ -406,6 +435,7 @@
         <h3>總冠軍系列盤（分階段獨立彩池）</h3>
         <form id="addRosterForm">
           <input id="newRosterTitle" placeholder="盤口名稱，例如：總冠軍 · 八強前" required maxlength="80">
+          <input id="newRosterBanker" placeholder="莊家名字（留空＝彩池盤，大家互賭）" maxlength="20">
           <button type="submit">用 16 人名單開新盤</button>
         </form>
         <p class="admin-hint">
@@ -421,8 +451,13 @@
         <form id="addMarketForm">
           <input id="newQTitle" placeholder="題目，例如：決賽是否有人喊哉？" required maxlength="80">
           <input id="newQOptions" placeholder="選項，用逗號分隔，例如：有,沒有" required maxlength="200">
+          <input id="newQBanker" placeholder="莊家名字（留空＝彩池盤，大家互賭）" maxlength="20">
           <button type="submit">新增盤口</button>
         </form>
+        <p class="admin-hint">
+          填了莊家名字就是<b>莊家盤</b>：賠率由莊家逐一開價、不需要對手池、不抽水，
+          賠付風險由莊家承擔。留空則是<b>彩池盤</b>，大家互賭、莊家只抽水。
+        </p>
         <button class="danger-btn" id="resetAllBtn" style="margin-top:16px;">重置整個賽事（清空所有下注與盤口）</button>
       </div>
       <div>
@@ -468,6 +503,7 @@ const ID_KEY    = 'dbp-bettor-id';
 const TAB_KEY   = 'dbp-tab';
 const PLAYER_COUNT = 16;
 const QUICK_AMOUNTS = [100, 500, 1000];
+const DEFAULT_ODDS = 2;      // 莊家盤新選項的預設賠率（1:1 平賭）
 
 /* ------------------------------------------------------------
    資料模型
@@ -557,13 +593,19 @@ function normalize(raw){
     const options = Object.entries(m.options || {}).map(([oid,o])=>({
       id: oid,
       label: (o && typeof o.label === 'string') ? o.label : null,
-      order: (o && typeof o.order === 'number') ? o.order : 0
+      order: (o && typeof o.order === 'number') ? o.order : 0,
+      // 莊家盤才有意義：莊家為這個選項開的賠率
+      odds: (o && typeof o.odds === 'number' && o.odds > 1) ? o.odds : DEFAULT_ODDS
     })).sort((a,b)=>a.order - b.order);
+    const banker = (typeof m.banker === 'string' && m.banker.trim()) ? m.banker.trim() : null;
     return {
       id,
       title: m.title || '(未命名盤口)',
       desc: m.desc || '',
       group: m.group === 'main' ? 'main' : 'prop',
+      // 舊資料沒有 mode 欄位，一律視為彩池盤（向後相容）
+      mode: (m.mode === 'book' && banker) ? 'book' : 'pool',
+      banker,
       order: typeof m.order === 'number' ? m.order : 0,
       locked: !!m.locked,
       settled: !!m.settled,
@@ -598,8 +640,19 @@ function marketTotal(market){
   return market.options.reduce((s,o)=> s + poolOf(market.id, o.id), 0);
 }
 
+// 每筆注單成立當下鎖住的賠率。莊家事後改賠率只影響之後的新注單，
+// 不能回頭動已成立的注——否則莊家可以看完大家押哪邊再把賠率改低。
+function betOdds(bet){
+  return (typeof bet.oddsAtBet === 'number' && bet.oddsAtBet > 1) ? bet.oddsAtBet : DEFAULT_ODDS;
+}
+
 // 未結算時顯示的即時賠率
 function liveOdds(market, optId){
+  if(market.mode === 'book'){
+    // 莊家盤：賠率由莊家開，不隨池額浮動，也不需要對手池
+    const opt = market.options.find(o=>o.id === optId);
+    return { kind:'odds', value: opt ? opt.odds : DEFAULT_ODDS, fixed:true };
+  }
   const total = marketTotal(market);
   const pool  = poolOf(market.id, optId);
   if(pool <= 0)          return { kind:'none' };
@@ -607,9 +660,35 @@ function liveOdds(market, optId){
   return { kind:'odds', value: (total * (1 - state.rake)) / pool };
 }
 
+// 莊家盤：如果某個選項開出，莊家的淨收益是多少（正＝莊家賺，負＝莊家要賠）
+function bankerNetIfWins(market, optId){
+  const staked = marketTotal(market);
+  const payout = state.bets
+    .filter(b => b.marketId === market.id && b.optionId === optId)
+    .reduce((s,b)=> s + b.amount * betOdds(b), 0);
+  return staked - payout;
+}
+
 // 結算後的派彩結論（同樣完全由帳本推導）
 function settleInfo(market){
   const total    = marketTotal(market);
+
+  if(market.mode === 'book'){
+    // 莊家盤：每筆中獎注按它自己鎖住的賠率派彩，莊家收下所有未中的注。
+    // 不抽水——莊家的利潤已經包在他開的賠率裡了。不需要對手池。
+    const payoutTotal = state.bets
+      .filter(b => b.marketId === market.id && b.optionId === market.winnerId)
+      .reduce((s,b)=> s + b.amount * betOdds(b), 0);
+    return {
+      total, rake: 0, mode: 'book',
+      winPool: market.winnerId ? poolOf(market.id, market.winnerId) : 0,
+      losePool: 0,
+      payoutTotal,
+      bankerNet: total - payoutTotal,
+      odds: 0
+    };
+  }
+
   const winPool  = market.winnerId ? poolOf(market.id, market.winnerId) : 0;
   const losePool = total - winPool;
   const rake     = market.rakeAtSettle != null ? market.rakeAtSettle : state.rake;
@@ -629,6 +708,16 @@ function betOutcome(bet){
   const market = state.markets.find(m => m.id === bet.marketId);
   if(!market)          return { status:'gone',    label:'盤口已刪除', payout:0, profit:0 };
   if(!market.settled)  return { status:'pending', label:'待開',       payout:0, profit:0, market };
+
+  if(market.mode === 'book'){
+    const info = settleInfo(market);
+    if(bet.optionId !== market.winnerId){
+      return { status:'lose', label:'未中', payout:0, profit:-bet.amount, market, info };
+    }
+    const payout = Math.round(bet.amount * betOdds(bet));
+    return { status:'win', label:'中獎', payout, profit: payout - bet.amount, market, info };
+  }
+
   const info = settleInfo(market);
   if(info.mode === 'refund'){
     return { status:'refund', label:'退款', payout:bet.amount, profit:0, market, info };
@@ -714,6 +803,7 @@ function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
   if(el.dataset.betAmt !== undefined) return { sel:`[data-bet-amt="${el.dataset.betAmt}"]`, s:el.selectionStart, e:el.selectionEnd };
+  if(el.dataset.oddsIn !== undefined) return { sel:`[data-odds-in="${el.dataset.oddsIn}"]`, s:el.selectionStart, e:el.selectionEnd };
   if(el.dataset.pidx   !== undefined) return { sel:`[data-pidx="${el.dataset.pidx}"]`,     s:el.selectionStart, e:el.selectionEnd };
   return null;
 }
@@ -820,7 +910,10 @@ function renderMarketCard(market){
     const isWinner = market.settled && opt.id === market.winnerId;
 
     let oddsHtml;
-    if(market.settled){
+    if(market.mode === 'book'){
+      // 莊家盤：顯示莊家開的固定賠率（就是掛牌價，結算後也照這個顯示）
+      oddsHtml = `<span class="odds" data-odds-for="${market.id}:${opt.id}">${opt.odds.toFixed(2)}x</span>`;
+    }else if(market.settled){
       if(info.mode === 'refund')      oddsHtml = `<span class="odds refund">全額退款</span>`;
       else if(isWinner)               oddsHtml = `<span class="odds">${info.odds.toFixed(2)}x</span>`;
       else                            oddsHtml = `<span class="odds refund">—</span>`;
@@ -849,7 +942,14 @@ function renderMarketCard(market){
             ${oddsHtml}
           </div>
           <div class="bar-track"><div class="bar-fill" style="width:${total>0 ? (pool/maxPool*100) : 0}%"></div></div>
-          <div class="pool-amt">池：$${fmt(pool)}${total>0?`（${(pool/total*100).toFixed(1)}%）`:''}${myAmt>0?` · <span class="mine">我押 $${fmt(myAmt)}</span>`:''}</div>
+          <div class="pool-amt">${market.mode==='book'?'注金':'池'}：$${fmt(pool)}${(market.mode!=='book'&&total>0)?`（${(pool/total*100).toFixed(1)}%）`:''}${myAmt>0?` · <span class="mine">我押 $${fmt(myAmt)}</span>`:''}</div>
+          ${(market.mode==='book' && !market.settled) ? `
+          <div class="odds-edit">
+            <label>莊家賠率</label>
+            <input type="number" min="1.01" step="0.05" inputmode="decimal"
+                   data-odds-in="${key}" value="${opt.odds.toFixed(2)}">
+            <span class="odds-note">改了只影響之後的新注單</span>
+          </div>` : ''}
           ${betForm}
         </div>
       </div>`;
@@ -858,7 +958,13 @@ function renderMarketCard(market){
   let banner = '';
   if(market.settled){
     const winOpt = market.options.find(o=>o.id === market.winnerId);
-    if(info.mode === 'empty'){
+    if(info.mode === 'book'){
+      const net = info.bankerNet;
+      banner = `<div class="winner-banner">🏆 結果：${esc(optionLabel(market, winOpt))}
+        <br>莊家 <b>${esc(market.banker)}</b>　收到注金 $${fmt(info.total)}　派彩 $${fmt(info.payoutTotal)}
+        <br>莊家淨${net >= 0 ? '收益' : '虧損'}：<span class="${net>=0?'profit-pos':'profit-neg'}">${net>=0?'+':''}${fmt(net)}</span>
+        ${info.total === 0 ? '<br>（這盤沒有人下注）' : ''}</div>`;
+    }else if(info.mode === 'empty'){
       banner = `<div class="winner-banner">🏆 結果：${esc(optionLabel(market, winOpt))}<br>
         這盤沒有人下注。</div>`;
     }else if(info.mode === 'refund'){
@@ -891,20 +997,75 @@ function renderMarketCard(market){
     </div>`;
 
   return `
-    <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''}">
+    <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''} ${market.mode==='book'?'book':''}">
       <div class="market-head">
-        <h2>${esc(market.title)}${market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
-        <div class="market-pool-badge">總池 $${fmt(total)}</div>
+        <h2>${esc(market.title)}${market.mode==='book'?'<span class="chip book">莊家盤</span>':''}${market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
+        <div class="market-pool-badge">${market.mode==='book'?'總注金':'總池'} $${fmt(total)}</div>
       </div>
+      ${market.mode==='book'?`<div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　賠率由莊家開，不需要對手池，賠付風險由莊家承擔，不抽水</div>`:''}
       ${market.desc?`<div class="market-desc">${esc(market.desc)}</div>`:''}
       ${banner}
       ${rows}
+      ${(market.mode==='book' && !market.settled) ? renderBankerRisk(market) : ''}
       ${settleControls}
       ${market.settled ? renderLedger(market, info) : ''}
     </div>`;
 }
 
+/* ---------- 莊家風險面板 ----------
+   當莊的人最需要看到的東西：每個結果開出時他要賠多少、最壞情況多少。 */
+function renderBankerRisk(market){
+  const staked = marketTotal(market);
+  if(staked <= 0){
+    return `<div class="banker-risk"><div class="br-title">莊家風險</div>
+      <div class="br-empty">還沒有人下注，目前沒有曝險。</div></div>`;
+  }
+  const funded = market.options.filter(o => poolOf(market.id, o.id) > 0);
+  const rows = funded.map(o=>{
+    const net = bankerNetIfWins(market, o.id);
+    return `<tr>
+      <td>${esc(optionLabel(market, o))} 開出</td>
+      <td class="num ${net>=0?'profit-pos':'profit-neg'}">${net>=0?'+':''}${fmt(net)}</td>
+    </tr>`;
+  }).join('');
+  const noBetOption = market.options.some(o => poolOf(market.id, o.id) <= 0);
+  const worst = Math.min(...funded.map(o => bankerNetIfWins(market, o.id)),
+                         noBetOption ? staked : Infinity);
+  return `<div class="banker-risk">
+    <div class="br-title">莊家 ${esc(market.banker)} 的風險　·　已收注金 $${fmt(staked)}</div>
+    <div class="table-scroll"><table class="ledger">
+      <tbody>
+        ${rows}
+        ${noBetOption ? `<tr><td>其他沒人押的選項開出</td><td class="num profit-pos">+${fmt(staked)}</td></tr>` : ''}
+        <tr class="br-worst"><td><b>最壞情況</b></td>
+          <td class="num ${worst>=0?'profit-pos':'profit-neg'}"><b>${worst>=0?'+':''}${fmt(worst)}</b></td></tr>
+      </tbody>
+    </table></div>
+  </div>`;
+}
+
 function renderLedger(market, info){
+  if(info.mode === 'book'){
+    const all = state.bets.filter(b => b.marketId === market.id);
+    if(all.length === 0) return `<div class="empty-note">這盤沒有人下注。</div>`;
+    const rows = all.map(b=>{
+      const o = betOutcome(b);
+      const opt = market.options.find(x=>x.id === b.optionId);
+      return `<tr class="${b.bettorId===me.id?'is-me':''}">
+        <td>${esc(b.name)}${b.bettorId===me.id?' <span style="color:var(--gold-bright)">(我)</span>':''}</td>
+        <td>${esc(optionLabel(market, opt))}</td>
+        <td class="num">${betOdds(b).toFixed(2)}x</td>
+        <td class="num">$${fmt(b.amount)}</td>
+        <td class="num">${o.status==='win' ? '$'+fmt(o.payout) : '—'}</td>
+        <td class="num ${o.profit>=0?'profit-pos':'profit-neg'}">${o.profit>=0?'+':''}${fmt(o.profit)}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="table-scroll"><table class="ledger">
+      <thead><tr><th>下注者</th><th>押</th><th class="num">鎖定賠率</th><th class="num">下注</th><th class="num">派彩</th><th class="num">淨利</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>`;
+  }
+
   const relevant = info.mode === 'refund'
     ? state.bets.filter(b => b.marketId === market.id)
     : state.bets.filter(b => b.marketId === market.id && b.optionId === market.winnerId);
@@ -1007,6 +1168,17 @@ function attachMarketHandlers(markets){
   document.querySelectorAll('[data-del-btn]').forEach(btn=>{
     btn.onclick = ()=> deleteMarket(btn.dataset.delBtn);
   });
+  document.querySelectorAll('[data-odds-in]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const [mid, oid] = inp.dataset.oddsIn.split(':');
+      const v = Math.round(parseFloat(inp.value) * 100) / 100;
+      if(!(v > 1)){ showToast('賠率必須大於 1.00'); render(); return; }
+      try{
+        await db.ref(`${DB_PATH}/markets/${mid}/options/${oid}/odds`).set(v);
+        showToast(`賠率已改為 ${v.toFixed(2)}x（只影響之後的新注單）`);
+      }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+    };
+  });
 }
 
 /* ---------- 下注：單純 append，天生不會互相覆蓋 ---------- */
@@ -1035,13 +1207,25 @@ async function placeBet(marketId, optionId){
     if(m.settled)   { showToast('此盤已結算，無法下注'); return; }
     if(m.locked)    { showToast('此盤已封盤，無法下注'); return; }
 
-    await db.ref(`${DB_PATH}/bets`).push({
-      marketId, optionId, name, bettorId: me.id, amount, ts: Date.now()
-    });
+    const isBook = m.mode === 'book' && !!m.banker;
+    if(isBook && String(m.banker).trim() === name){
+      showToast('你是這盤的莊家，不能在自己的盤上下注');
+      return;
+    }
+
+    const payload = { marketId, optionId, name, bettorId: me.id, amount, ts: Date.now() };
+    if(isBook){
+      // 讀伺服器端當下的賠率並鎖進這筆注單，莊家事後改價不影響已成立的注
+      const o = m.options && m.options[optionId];
+      payload.oddsAtBet = (o && typeof o.odds === 'number' && o.odds > 1) ? o.odds : DEFAULT_ODDS;
+    }
+    await db.ref(`${DB_PATH}/bets`).push(payload);
 
     delete draftAmounts[key];
     if(inp) inp.value = '';
-    showToast(`${name} 下注 $${fmt(amount)} 成功！`);
+    showToast(isBook
+      ? `${name} 下注 $${fmt(amount)} @ ${payload.oddsAtBet.toFixed(2)}x（已鎖定）`
+      : `${name} 下注 $${fmt(amount)} 成功！`);
     requestAnimationFrame(()=>{
       const el = document.querySelector(`[data-odds-for="${key}"]`);
       if(el){ el.classList.add('flash'); setTimeout(()=>el.classList.remove('flash'), 500); }
@@ -1077,6 +1261,7 @@ async function settleMarket(marketId){
     refund:     `全部注額都押在同一個選項，沒有對手池 → 此盤作廢，原注 $${fmt(info.total)} 全額退還、不抽水。`,
     'no-winner':`沒有人押中，彩池 $${fmt(info.total)} 全數歸莊。`,
     paid:       `賠率 ${info.odds.toFixed(2)}x　總池 $${fmt(info.total)}　抽水 ${Math.round(info.rake*100)}%（$${fmt(info.total*info.rake)}）　派彩 $${fmt(info.total*(1-info.rake))}`,
+    book:       `莊家盤（不抽水）\n莊家：${market.banker}\n收到注金 $${fmt(info.total)}\n派彩 $${fmt(info.payoutTotal)}\n莊家淨${info.bankerNet>=0?'收益':'虧損'}：${info.bankerNet>=0?'+':''}${fmt(info.bankerNet)}`,
   }[info.mode];
 
   if(!confirm(`確定以「${optionLabel(market, winOpt)}」結算「${market.title}」？\n\n${preview}\n\n結算後無法再下注，也無法復原。`)) return;
@@ -1197,6 +1382,7 @@ async function settleSeries(){
       refund:      `作廢退款 $${fmt(info.total)}`,
       'no-winner': `無人押中，$${fmt(info.total)} 歸莊`,
       paid:        `${info.odds.toFixed(2)}x，派彩 $${fmt(info.total*(1-info.rake))}`,
+      book:        `莊家盤（${m.banker}）派彩 $${fmt(info.payoutTotal)}，莊家淨 ${info.bankerNet>=0?'+':''}${fmt(info.bankerNet)}`,
     }[info.mode];
     return `· ${m.title}：${desc}`;
   });
@@ -1259,18 +1445,26 @@ document.getElementById('addRosterForm').addEventListener('submit', async (e)=>{
   e.preventDefault();
   const title = document.getElementById('newRosterTitle').value.trim();
   if(!title) return;
+  const banker = document.getElementById('newRosterBanker').value.trim();
   const options = {};
-  for(let i=0;i<PLAYER_COUNT;i++) options['p'+i] = { order:i };
+  for(let i=0;i<PLAYER_COUNT;i++){
+    options['p'+i] = banker ? { order:i, odds:DEFAULT_ODDS } : { order:i };
+  }
   try{
     await db.ref(`${DB_PATH}/markets`).push({
       title,
-      desc:'獨立彩池，與其他階段的總冠軍盤分開計算',
+      desc: banker
+        ? '莊家盤，賠率由莊家開'
+        : '獨立彩池，與其他階段的總冠軍盤分開計算',
       group:'main',
+      mode: banker ? 'book' : 'pool',
+      banker: banker || null,
       order: Date.now(),          // champion 的 order 是 0，新階段盤排在後面
       locked:false, settled:false, winnerId:null,
       options
     });
     document.getElementById('newRosterTitle').value = '';
+    document.getElementById('newRosterBanker').value = '';
     activeTab = 'main';
     try{ localStorage.setItem(TAB_KEY, activeTab); }catch(err){}
     showToast('已開新的總冠軍系列盤');
@@ -1285,17 +1479,25 @@ document.getElementById('addMarketForm').addEventListener('submit', async (e)=>{
   if(!title || !optsRaw) return;
   const labels = optsRaw.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
   if(labels.length < 2){ showToast('至少需要兩個選項'); return; }
+  const banker = document.getElementById('newQBanker').value.trim();
   const options = {};
-  labels.forEach((label, i)=>{ options[uid()] = { label, order:i }; });
+  labels.forEach((label, i)=>{
+    options[uid()] = banker ? { label, order:i, odds:DEFAULT_ODDS } : { label, order:i };
+  });
   try{
     await db.ref(`${DB_PATH}/markets`).push({
-      title, desc:'自訂盤口', group:'prop',
+      title,
+      desc: banker ? '莊家盤，賠率由莊家開' : '自訂盤口',
+      group:'prop',
+      mode: banker ? 'book' : 'pool',
+      banker: banker || null,
       order: Date.now(),
       locked:false, settled:false, winnerId:null,
       options
     });
     document.getElementById('newQTitle').value = '';
     document.getElementById('newQOptions').value = '';
+    document.getElementById('newQBanker').value = '';
     activeTab = 'prop';
     try{ localStorage.setItem(TAB_KEY, activeTab); }catch(err){}
     showToast('盤口新增成功！');
