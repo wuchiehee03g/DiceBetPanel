@@ -99,7 +99,7 @@ function boot(){
 
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
-                    'binA','binB','matchNo','matchA','matchB','matchBanker','matchPriorK'];
+                    'binA','binB','matchA','matchB','matchBanker','matchPriorK'];
 function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
@@ -200,42 +200,68 @@ function pendingOptionCount(){
 }
 
 function renderMatchPanel(){
+  const no = nextMatchNo(state);
   const used = [...new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo))];
   const bigOpts = [];
   for(let i=2;i<=MAX_HP;i++){
     bigOpts.push(`<option value="${i}" ${i===DEFAULT_BIG_MIN?'selected':''}>${i} 格以上為大</option>`);
   }
+  const sel = (id, defIdx) => `<select data-${id}="1" id="${id}">${
+    state.players.map((p,i)=>`<option value="${i}"${i===defIdx?' selected':''}>${esc(p)}</option>`).join('')}</select>`;
+
+  const bigMin = DEFAULT_BIG_MIN;
+  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs();
+  const O = MATCH_OVERROUND;
+
   return `<div class="panel">
     <h2>開一場單挑賽事（一次建三個盤）</h2>
     <div class="panel-grid">
       <div class="form-col">
-        <h3>賽事</h3>
-        <input data-match-no="1" id="matchNo" placeholder="賽事編號，例如：8-1" maxlength="12">
-        <input data-match-a="1" id="matchA" placeholder="參賽玩家一（手動輸入）" maxlength="20">
-        <input data-match-b="1" id="matchB" placeholder="參賽玩家二（手動輸入）" maxlength="20">
-        ${used.length ? `<p class="form-hint">已開過的編號：${used.map(esc).join('、')}</p>` : ''}
+        <h3>賽事編號</h3>
+        <div class="auto-no">第 <b id="matchNoShow">${no}</b> 場<span>自動編號</span></div>
+        ${used.length ? `<p class="form-hint">已開過：${used.map(esc).join('、')}</p>` : ''}
+        <h3 style="margin-top:14px;">參賽玩家</h3>
+        ${sel('matchA', 0)}
+        ${sel('matchB', 1)}
+        <p class="form-hint">從名單挑，不用打字。之後在「設定」改名單，所有場次的盤口會跟著同步。</p>
       </div>
       <div class="form-col">
         <h3>莊家與定價</h3>
-        <input data-match-banker="1" id="matchBanker" placeholder="莊家名字（必填）" maxlength="20">
+        <input data-match-banker="1" id="matchBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
         <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
                value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
         <select id="matchBigMin">${bigOpts.join('')}</select>
         <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K, 2)}</p>
       </div>
       <div class="form-col">
-        <h3>會建立這三個盤</h3>
+        <h3>會建立這三個盤（賠率已依機率算好）</h3>
+        <div class="odds-preview" id="matchOddsPreview">${matchOddsPreview(bigMin)}</div>
         <p class="form-hint">
-          · 第 N 場 · <b>誰獲勝</b>（兩位玩家）<br>
-          · 第 N 場 · <b>結束比分 大/小</b><br>
-          · 第 N 場 · <b>結束比分 單/雙</b><br><br>
-          比分指<b>獲勝者剩餘血格</b>（1~5）。單 = 1、3、5，雙 = 2、4；
-          大小分界可在左邊調整，規則會寫進盤口說明讓大家看得到。
+          比分指<b>獲勝者剩餘血格</b>。血量五格、歸零淘汰，所以「險勝」比「完勝」
+          常見得多 —— 剩 1 格的機率是剩 5 格的 4.4 倍，大小與單雙<b>本來就不是五五波</b>。
+          以上賠率假設雙方實力相當，開完可再依實力微調。
         </p>
         <button type="button" id="matchBtn">建立這場的三個盤</button>
       </div>
     </div>
   </div>`;
+}
+
+// 開盤前先把三個盤的賠率算給莊家看
+function matchOddsPreview(bigMin){
+  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs(), O = MATCH_OVERROUND;
+  const row = (label, p, odds) =>
+    `<tr><td>${esc(label)}</td><td class="num">${(p*100).toFixed(1)}%</td><td class="num">${odds.toFixed(2)}x</td></tr>`;
+  return `<table class="ledger">
+    <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th></tr></thead>
+    <tbody>
+      ${row('誰獲勝（各方）', 0.5, oddsFromProb(0.5, O))}
+      ${row('大', bs.big,   oddsFromProb(bs.big,   O))}
+      ${row('小', bs.small, oddsFromProb(bs.small, O))}
+      ${row('單', oe.odd,   oddsFromProb(oe.odd,   O))}
+      ${row('雙', oe.even,  oddsFromProb(oe.even,  O))}
+    </tbody></table>
+    <p class="form-hint" style="margin-top:6px;">莊家水錢 +${((O-1)*100).toFixed(0)}%</p>`;
 }
 
 function renderCreatePanel(){
@@ -568,6 +594,8 @@ function attachHandlers(){
   // 調整黏性（或選項數）時即時更新體感提示
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
   if(mk && mi) mk.oninput = ()=>{ mi.innerHTML = impactHint(parseFloat(mk.value), 2); };
+  const bm = document.getElementById('matchBigMin'), op = document.getElementById('matchOddsPreview');
+  if(bm && op) bm.onchange = ()=>{ op.innerHTML = matchOddsPreview(parseInt(bm.value, 10)); };
   const nk = document.getElementById('newPriorK'), ni = document.getElementById('createImpact');
   const refreshCreateImpact = ()=>{
     if(ni) ni.innerHTML = impactHint(parseFloat(nk ? nk.value : DEFAULT_PRIOR_K), pendingOptionCount());
@@ -644,28 +672,31 @@ function attachHandlers(){
 }
 
 async function createMatch(){
+  const matchNo = String(nextMatchNo(state));
+  const ai = parseInt(document.getElementById('matchA').value, 10);
+  const bi = parseInt(document.getElementById('matchB').value, 10);
   const built = buildMatchMarkets({
-    matchNo: document.getElementById('matchNo').value,
-    playerA: document.getElementById('matchA').value,
-    playerB: document.getElementById('matchB').value,
+    matchNo,
+    playerAIndex: ai,
+    playerBIndex: bi,
     banker:  document.getElementById('matchBanker').value,
     priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DEFAULT_PRIOR_K)),
     bigMin:  parseInt(document.getElementById('matchBigMin').value, 10),
   });
   if(built.error){ showToast(built.error); return; }
 
-  const dup = state.markets.some(m => m.matchNo === String(document.getElementById('matchNo').value).trim());
-  if(dup && !confirm(`第 ${document.getElementById('matchNo').value} 場已經開過盤了，確定要再開一組嗎？`)) return;
+  if(!confirm(
+    `建立第 ${matchNo} 場：${state.players[ai]} vs ${state.players[bi]}\n\n` +
+    `會開三個盤：誰獲勝、結束比分大/小、結束比分單/雙\n` +
+    `賠率依「雙方實力相當」計算，莊家水錢 +${((MATCH_OVERROUND-1)*100).toFixed(0)}%`
+  )) return;
 
   try{
     const base = Date.now();
     for(let i=0;i<built.markets.length;i++){
       await db.ref(`${DB_PATH}/markets`).push({ ...built.markets[i], order: base + i });
     }
-    document.getElementById('matchNo').value = '';
-    document.getElementById('matchA').value = '';
-    document.getElementById('matchB').value = '';
-    showToast('已建立這場的三個盤口');
+    showToast(`已建立第 ${matchNo} 場的三個盤口`);
     render();
   }catch(e){ showToast('建立失敗：' + String(e).slice(0,60)); }
 }

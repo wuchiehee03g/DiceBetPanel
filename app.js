@@ -31,47 +31,118 @@ const DICE_PIPS      = ['⚀','⚁','⚂','⚃','⚄','⚅'];
    -------------------------------------------------------------------- */
 const MAX_HP = 5;
 const DEFAULT_BIG_MIN = 3;
+const MATCH_OVERROUND = 1.10;   // 單挑盤的預設莊家水錢：+10%
+
+/* 獲勝者剩餘血格的機率分布 ------------------------------------------
+   假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
+   所以這是負二項分布：敗方剛好累積 MAX_HP 次失血，勝方失血 j 次。
+
+     P(勝方剩 MAX_HP − j) = C(MAX_HP−1+j, j) × (1/2)^(MAX_HP−1+j)
+
+   結果是「險勝」比「完勝」常見得多——剩 1 格的機率是剩 5 格的 4.4 倍。
+   所以大/小、單/雙本來就不是五五波，用 2.00 開價會被玩家吃掉。
+   -------------------------------------------------------------------- */
+function hpDistribution(){
+  const comb = (n,k)=>{ let r=1; for(let i=0;i<k;i++) r = r*(n-i)/(i+1); return r; };
+  const out = [];
+  for(let j=0;j<MAX_HP;j++){
+    out.push({ hp: MAX_HP - j, p: comb(MAX_HP-1+j, j) * Math.pow(0.5, MAX_HP-1+j) });
+  }
+  return out.sort((a,b)=>a.hp-b.hp);
+}
+function bigSmallProbs(bigMin){
+  const d = hpDistribution();
+  const big = d.filter(x=>x.hp >= bigMin).reduce((s,x)=>s+x.p, 0);
+  return { big, small: 1 - big };
+}
+function oddEvenProbs(){
+  const d = hpDistribution();
+  const odd = d.filter(x=>x.hp % 2 === 1).reduce((s,x)=>s+x.p, 0);
+  return { odd, even: 1 - odd };
+}
+// 由機率換算成含莊家水錢的賠率
+function oddsFromProb(p, overround){
+  const O = (Number(overround) > 0) ? Number(overround) : MATCH_OVERROUND;
+  if(!(p > 0)) return MAX_AUTO_ODDS;
+  return Math.max(1.01, Math.round((1 / (p * O)) * 100) / 100);
+}
+
+const pct = p => (p*100).toFixed(1) + '%';
 
 function bigSmallDesc(bigMin){
   const big = [], small = [];
   for(let i=1;i<=MAX_HP;i++) (i >= bigMin ? big : small).push(i);
-  return `獲勝者剩餘血格：大 = ${big.join('、')}　小 = ${small.join('、')}`;
+  const pr = bigSmallProbs(bigMin);
+  return `獲勝者剩餘血格：大 = ${big.join('、')}　小 = ${small.join('、')}`
+       + `（實力相當時 大 ${pct(pr.big)} / 小 ${pct(pr.small)}）`;
 }
 function oddEvenDesc(){
   const odd = [], even = [];
   for(let i=1;i<=MAX_HP;i++) (i % 2 ? odd : even).push(i);
-  return `獲勝者剩餘血格：單 = ${odd.join('、')}　雙 = ${even.join('、')}`;
+  const pr = oddEvenProbs();
+  return `獲勝者剩餘血格：單 = ${odd.join('、')}　雙 = ${even.join('、')}`
+       + `（實力相當時 單 ${pct(pr.odd)} / 雙 ${pct(pr.even)}）`;
 }
 
-// 回傳一場單挑要建立的三個盤口（純資料，方便測試與重用）
+// 下一個賽事編號：現有數字編號的最大值 + 1
+function nextMatchNo(state){
+  const nums = (state.markets || [])
+    .map(m => Number(m.matchNo))
+    .filter(n => Number.isFinite(n) && n > 0);
+  return nums.length ? Math.max(...nums) + 1 : 1;
+}
+
+/* 回傳一場單挑要建立的三個盤口（純資料，方便測試與重用）
+
+   兩位參賽者用**玩家名單的索引**指定，不是打字輸入 —— 選項 id 因此是 p<i>，
+   之後在後台改名單，所有場次的盤口標籤都會跟著同步。
+
+   賠率依「雙方實力相當」的機率分布計算，不是一律 2.00：
+   誰獲勝 50/50，大小與單雙則依 hpDistribution() 推導。 */
 function buildMatchMarkets(opts){
   const matchNo = String(opts.matchNo || '').trim();
-  const a = String(opts.playerA || '').trim();
-  const b = String(opts.playerB || '').trim();
+  const ai = Number(opts.playerAIndex);
+  const bi = Number(opts.playerBIndex);
   const banker = String(opts.banker || '').trim();
   const priorK = (typeof opts.priorK === 'number' && opts.priorK > 0) ? opts.priorK : DEFAULT_PRIOR_K;
   const bigMin = (typeof opts.bigMin === 'number' && opts.bigMin >= 2 && opts.bigMin <= MAX_HP)
     ? opts.bigMin : DEFAULT_BIG_MIN;
+  const overround = (typeof opts.overround === 'number' && opts.overround > 1)
+    ? opts.overround : MATCH_OVERROUND;
 
-  if(!matchNo) return { error:'請輸入賽事編號' };
-  if(!a || !b) return { error:'請輸入兩位參賽玩家' };
-  if(a === b)  return { error:'兩位參賽玩家不能相同' };
-  if(!banker)  return { error:'請輸入莊家名字' };
+  const validIdx = i => Number.isInteger(i) && i >= 0 && i < PLAYER_COUNT;
+  if(!matchNo)                    return { error:'缺少賽事編號' };
+  if(!validIdx(ai) || !validIdx(bi)) return { error:'請選擇兩位參賽玩家' };
+  if(ai === bi)                   return { error:'兩位參賽玩家不能相同' };
+  if(!banker)                     return { error:'請輸入莊家名字' };
 
   const base = { category:'binary', banker, matchNo, autoPrice:true, priorK,
                  locked:false, settled:false, winnerId:null };
-  const pair = (l1, l2) => ({
-    [uid()]: { label:l1, order:0, odds:DEFAULT_ODDS },
-    [uid()]: { label:l2, order:1, odds:DEFAULT_ODDS },
-  });
+  const bs = bigSmallProbs(bigMin);
+  const oe = oddEvenProbs();
 
   return { markets: [
-    { ...base, title:`第 ${matchNo} 場 · 誰獲勝`,
-      desc:`${a} vs ${b}`, options: pair(a, b) },
-    { ...base, title:`第 ${matchNo} 場 · 結束比分 大/小`,
-      desc: bigSmallDesc(bigMin), options: pair('大', '小') },
-    { ...base, title:`第 ${matchNo} 場 · 結束比分 單/雙`,
-      desc: oddEvenDesc(), options: pair('單', '雙') },
+    { ...base,
+      title:`第 ${matchNo} 場 · 誰獲勝`,
+      desc:`假設雙方實力相當（各 50.0%）`,
+      options: {
+        ['p'+ai]: { order:0, odds: oddsFromProb(0.5, overround) },
+        ['p'+bi]: { order:1, odds: oddsFromProb(0.5, overround) },
+      }},
+    { ...base,
+      title:`第 ${matchNo} 場 · 結束比分 大/小`,
+      desc: bigSmallDesc(bigMin),
+      options: {
+        [uid()]: { label:'大', order:0, odds: oddsFromProb(bs.big,   overround) },
+        [uid()]: { label:'小', order:1, odds: oddsFromProb(bs.small, overround) },
+      }},
+    { ...base,
+      title:`第 ${matchNo} 場 · 結束比分 單/雙`,
+      desc: oddEvenDesc(),
+      options: {
+        [uid()]: { label:'單', order:0, odds: oddsFromProb(oe.odd,  overround) },
+        [uid()]: { label:'雙', order:1, odds: oddsFromProb(oe.even, overround) },
+      }},
   ]};
 }
 
@@ -401,7 +472,9 @@ if(typeof module !== 'undefined' && module.exports){
     DB_PATH, PLAYER_COUNT, DEFAULT_ODDS, DEFAULT_PRIOR_K, DEFAULT_MAX_BET,
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
-    MAX_HP, DEFAULT_BIG_MIN, bigSmallDesc, oddEvenDesc, buildMatchMarkets, matchSortKey,
+    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, bigSmallDesc, oddEvenDesc,
+    hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
+    buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,

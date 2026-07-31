@@ -278,6 +278,15 @@ header.board-header.banker{border-bottom-color:var(--blue);}
 .form-col button:hover{filter:brightness(1.1);}
 .form-hint{font-size:11px;color:var(--ivory-dim);line-height:1.6;margin:0;}
 .form-hint b{color:var(--blue-bright);}
+.auto-no{
+  background:#0d0b08;border:1px solid var(--blue);border-radius:4px;
+  padding:9px 11px;font-size:13px;color:var(--ivory);
+  display:flex;align-items:baseline;gap:8px;
+}
+.auto-no b{font-family:'JetBrains Mono',monospace;font-size:18px;color:var(--blue-bright);}
+.auto-no span{font-size:10.5px;color:var(--ivory-dim);margin-left:auto;}
+.odds-preview table{margin-top:0;}
+.odds-preview td,.odds-preview th{padding:4px 8px;font-size:12px;}
 .radio-row{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ivory-dim);}
 .radio-row label{display:flex;align-items:center;gap:5px;cursor:pointer;}
 .radio-row input{accent-color:var(--blue);}
