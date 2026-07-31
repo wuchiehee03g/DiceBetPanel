@@ -132,32 +132,57 @@ function restoreFocus(f){
 
 /* 開賽後忘記封盤是最容易真的賠錢的操作失誤——現場有人看著比賽，
    在勝負底定的瞬間掏手機下注。所以把「還開著的盤」做成常駐警示。 */
-function renderOpenWarning(){
+/* 賽事是陸續開盤、陸續進行的，所以封盤要**依場次**而不是一次全封——
+   第 3 場要開打時只封第 3 場，還沒打的第 4 場與總冠軍盤要繼續收注。 */
+function openGroups(){
   const open = state.markets.filter(m => !m.settled && !m.locked);
-  const el = document.getElementById('openWarn');
-  if(open.length === 0){
-    el.innerHTML = state.markets.some(m=>!m.settled)
-      ? `<div class="banner ok">✅ 所有未結算的盤口都已封盤，可以安心開打。</div>` : '';
-    return;
-  }
-  el.innerHTML = `<div class="banner warn open-warn">
-    <div class="ow-head">⚠️ 有 <b>${open.length}</b> 個盤口還開放下注中</div>
-    <div class="ow-list">${open.map(m=>esc(m.title)).join('　·　')}</div>
-    <div class="ow-note">比賽開始前務必封盤 —— 否則現場看得到結果的人還能下注，賠率鎖定救不了你。</div>
-    <button type="button" id="lockAllBtn">一鍵封盤全部（${open.length} 個）</button>
-  </div>`;
-  document.getElementById('lockAllBtn').onclick = lockAll;
+  const groups = new Map();
+  open.forEach(m=>{
+    const key = m.matchNo || '__other__';
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(m);
+  });
+  return groups;
 }
 
-async function lockAll(){
-  const open = state.markets.filter(m => !m.settled && !m.locked);
-  if(open.length === 0) return;
-  if(!confirm(`確定把這 ${open.length} 個盤口全部封盤？\n\n${open.map(m=>'· '+m.title).join('\n')}\n\n封盤後玩家無法再下注，之後可以個別重新開盤。`)) return;
+function renderOpenWarning(){
+  const groups = openGroups();
+  const el = document.getElementById('openWarn');
+  if(groups.size === 0){
+    el.innerHTML = state.markets.some(m=>!m.settled)
+      ? `<div class="banner ok">✅ 目前沒有開放中的盤口，全部未結算的盤都已封盤。</div>` : '';
+    return;
+  }
+  const rows = [...groups.entries()].map(([key, ms])=>{
+    const label = key === '__other__' ? '不屬於任何場次（例如總冠軍盤）' : `第 ${esc(key)} 場`;
+    return `<div class="ow-group">
+      <div class="ow-g-head">${label}　<span>${ms.length} 個盤</span></div>
+      <div class="ow-list">${ms.map(m=>esc(m.title)).join('　·　')}</div>
+      <button type="button" data-lock-group="${esc(key)}">封盤這${key === '__other__' ? '些' : '一場'}（${ms.length} 個）</button>
+    </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class="banner warn open-warn">
+    <div class="ow-head">⚠️ 目前有盤口開放下注中</div>
+    <div class="ow-note">每場比賽開打前，封掉<b>那一場</b>的盤就好 —— 其他還沒打的場次要繼續收注。
+      忘了封的話，現場看得到結果的人還能下注，賠率鎖定救不了你。</div>
+    ${rows}
+  </div>`;
+  el.querySelectorAll('[data-lock-group]').forEach(b=>{
+    b.onclick = ()=> lockGroup(b.dataset.lockGroup);
+  });
+}
+
+async function lockGroup(key){
+  const ms = openGroups().get(key) || [];
+  if(ms.length === 0) return;
+  const label = key === '__other__' ? '不屬於任何場次的盤口' : `第 ${key} 場`;
+  if(!confirm(`確定封盤${label}的這 ${ms.length} 個盤？\n\n${ms.map(m=>'· '+m.title).join('\n')}\n\n封盤後玩家無法再下注，之後可以個別重新開盤。`)) return;
   const updates = {};
-  open.forEach(m=>{ updates[`markets/${m.id}/locked`] = true; });
+  ms.forEach(m=>{ updates[`markets/${m.id}/locked`] = true; });
   try{
     await db.ref(DB_PATH).update(updates);
-    showToast(`已封盤 ${open.length} 個盤口`);
+    showToast(`已封盤${label}的 ${ms.length} 個盤`);
   }catch(e){ showToast('封盤失敗：' + String(e).slice(0,60)); }
 }
 
