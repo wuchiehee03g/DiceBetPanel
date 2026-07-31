@@ -211,6 +211,10 @@ function normalize(raw){
       matchNo: (m.matchNo != null && String(m.matchNo).trim()) ? String(m.matchNo).trim() : null,
       autoPrice: m.autoPrice !== false,
       priorK: (typeof m.priorK === 'number' && m.priorK > 0) ? m.priorK : DEFAULT_PRIOR_K,
+      // 這盤自己的單筆上限；null 表示沿用全域設定
+      maxBet: (typeof m.maxBet === 'number' && m.maxBet > 0) ? m.maxBet : null,
+      // 單一選項的莊家賠付上限；null 表示不限制
+      maxLiability: (typeof m.maxLiability === 'number' && m.maxLiability > 0) ? m.maxLiability : null,
       order: typeof m.order === 'number' ? m.order : 0,
       locked: !!m.locked,
       settled: !!m.settled,
@@ -382,7 +386,13 @@ function betOutcome(state, pools, bet){
   return { status:'win', label:'中獎', payout, profit: payout - bet.amount, market };
 }
 
-/* ---------- 下注金額驗證（兩頁共用同一套規則） ---------- */
+/* ---------- 下注驗證（兩頁共用同一套規則） ---------- */
+
+// 這盤實際適用的單筆上限：盤口自己有設就用自己的，否則沿用全域
+function effectiveMaxBet(state, market){
+  return (market && market.maxBet) ? market.maxBet : state.maxBet;
+}
+
 function validateBetAmount(raw, maxBet){
   const amount = Math.floor(parseFloat(raw));
   if(!amount || amount <= 0 || !isFinite(amount)){
@@ -392,6 +402,47 @@ function validateBetAmount(raw, maxBet){
     return { ok:false, reason:`單筆上限 $${fmt(maxBet)}，請分次下注` };
   }
   return { ok:true, amount };
+}
+
+/* 單一選項曝險上限 --------------------------------------------------
+   莊家最怕的不是賠率高，是「錢全部集中在同一個選項」。
+   這裡在下注前先試算：如果這筆注成立、而且該選項開出，莊家要賠多少。
+   超過該盤設定的上限就擋下這一筆，其他選項不受影響照常開放。
+   ------------------------------------------------------------------ */
+function liabilityIfBetPlaced(state, pools, market, optId, amount, oddsAtBet){
+  const staked = marketTotal(pools, market) + amount;
+  const payout = state.bets
+    .filter(b => b.marketId === market.id && b.optionId === optId)
+    .reduce((s,b)=> s + b.amount * betOdds(b), 0) + amount * oddsAtBet;
+  return staked - payout;   // 負值＝莊家要賠
+}
+
+function checkLiability(state, pools, market, optId, amount, oddsAtBet){
+  if(!market.maxLiability) return { ok:true };
+  const net = liabilityIfBetPlaced(state, pools, market, optId, amount, oddsAtBet);
+  if(-net > market.maxLiability){
+    const current = bankerNetIfWins(state, pools, market, optId);
+    const room = market.maxLiability + current;   // current 是負的
+    return {
+      ok: false,
+      reason: room > 0
+        ? `這個選項已接近莊家承受上限，最多還能再押 $${fmt(Math.floor(room / Math.max(oddsAtBet - 1, 0.01)))}`
+        : `這個選項已達莊家承受上限，請改押其他選項`,
+      room
+    };
+  }
+  return { ok:true };
+}
+
+// 盤口整體的曝險使用率（給後台顯示進度用）
+function liabilityUsage(state, pools, market){
+  if(!market.maxLiability) return null;
+  const worst = worstCase(state, pools, market);
+  return {
+    used: Math.max(0, -worst),
+    cap: market.maxLiability,
+    pct: Math.min(100, Math.round(Math.max(0, -worst) / market.maxLiability * 100))
+  };
 }
 
 /* ============================================================
@@ -478,7 +529,8 @@ if(typeof module !== 'undefined' && module.exports){
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
-    bankerNetIfWins, worstCase, settleInfo, betOutcome, validateBetAmount,
+    bankerNetIfWins, worstCase, settleInfo, betOutcome,
+    effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };
 }

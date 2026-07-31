@@ -231,6 +231,10 @@ header.board-header.banker{border-bottom-color:var(--blue);}
 .banker-risk .ledger{margin-top:4px;}
 .banker-risk .ledger td{padding:4px 8px;font-size:12px;}
 .banker-risk tr.br-worst td{border-top:1px solid rgba(122,162,247,0.35);border-bottom:none;}
+.liab-gauge{margin:8px 0 4px;}
+.liab-label{font-size:11px;color:var(--ivory-dim);font-family:'JetBrains Mono',monospace;margin-bottom:4px;}
+.liab-gauge .bar-track{height:8px;}
+.liab-full{font-size:11px;color:var(--red-bright);font-weight:700;margin-top:4px;}
 
 /* ---------- action bars ---------- */
 .settle-bar{

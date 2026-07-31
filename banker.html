@@ -99,7 +99,8 @@ function boot(){
 
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
-                    'binA','binB','matchA','matchB','matchBanker','matchPriorK'];
+                    'binA','binB','matchA','matchB','matchBanker','matchPriorK',
+                    'marketMax','marketLiab'];
 function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
@@ -388,6 +389,15 @@ function renderMarketCard(market){
                  return `<span class="odds-note"${w?' style="color:var(--red-bright)"':''}>滿額注移動 ${im.dropPct}%${
                    w ? `（建議黏性 ${fmt(suggestPriorK(state.maxBet, market.options.length, 0.2))} 以上）` : ''}</span>`; })()}` : ''}
       <span class="bc-margin ${margin>=0?'':'neg'}">初始定價利潤率 ${margin>=0?'+':''}${margin.toFixed(1)}%${margin<0?'　⚠ 負值，長期不利':''}</span>
+    </div>
+    <div class="book-controls">
+      <label>本盤單筆上限
+        <input type="number" min="0" step="500" inputmode="numeric" placeholder="沿用全域"
+               data-market-max="${market.id}" value="${market.maxBet || ''}"></label>
+      <label>單選項曝險上限
+        <input type="number" min="0" step="5000" inputmode="numeric" placeholder="不限制"
+               data-market-liab="${market.id}" value="${market.maxLiability || ''}"></label>
+      <span class="odds-note">留空＝沿用全域／不限制。曝險上限會擋下讓莊家超額的注，但只擋那一個選項。</span>
     </div>`;
 
   const actions = `
@@ -433,8 +443,16 @@ function renderBankerRisk(market){
   }).join('');
   const hasUnbacked = market.options.some(o => poolOf(pools, market.id, o.id) <= 0);
   const worst = worstCase(state, pools, market);
+  const usage = liabilityUsage(state, pools, market);
+  const gauge = usage ? `
+    <div class="liab-gauge">
+      <div class="liab-label">曝險使用率 ${usage.pct}%　$${fmt(usage.used)} / $${fmt(usage.cap)}</div>
+      <div class="bar-track"><div class="bar-fill ${usage.pct>=80?'':'blue'}" style="width:${usage.pct}%"></div></div>
+      ${usage.pct >= 100 ? '<div class="liab-full">已達上限，新的注會被擋下</div>' : ''}
+    </div>` : '';
   return `<div class="banker-risk">
     <div class="br-title">莊家 ${esc(market.banker)} 的風險　·　已收注金 $${fmt(staked)}</div>
+    ${gauge}
     <div class="table-scroll"><table class="ledger"><tbody>
       ${rows}
       ${hasUnbacked ? `<tr><td>其他沒人押的選項開出</td><td class="num profit-pos">+${fmt(staked)}</td></tr>` : ''}
@@ -649,6 +667,21 @@ function attachHandlers(){
       }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
     };
   });
+  const numField = (attr, field, label) => {
+    document.querySelectorAll(`[data-${attr}]`).forEach(inp=>{
+      inp.onchange = async ()=>{
+        const v = inp.value.trim() === '' ? null : Math.round(parseFloat(inp.value));
+        if(v !== null && !(v > 0)){ showToast(`${label}必須是正數，或留空`); render(); return; }
+        try{
+          await db.ref(`${DB_PATH}/markets/${inp.dataset[field]}/${attr === 'market-max' ? 'maxBet' : 'maxLiability'}`).set(v);
+          showToast(v === null ? `${label}已清除` : `${label}設為 $${fmt(v)}`);
+        }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+      };
+    });
+  };
+  numField('market-max',  'marketMax',  '本盤單筆上限');
+  numField('market-liab', 'marketLiab', '單選項曝險上限');
+
   document.querySelectorAll('[data-lock-btn]').forEach(b=> b.onclick = ()=> toggleLock(b.dataset.lockBtn));
   document.querySelectorAll('[data-settle-btn]').forEach(b=> b.onclick = ()=> settleMarket(b.dataset.settleBtn));
   document.querySelectorAll('[data-undo-btn]').forEach(b=> b.onclick = ()=> undoSettle(b.dataset.undoBtn));

@@ -232,7 +232,7 @@ function renderMarketCard(market){
           <div class="pool-amt">注金：$${fmt(pool)}${myAmt>0?` · <span class="mine">我押 $${fmt(myAmt)}</span>`:''}</div>
           ${canBet ? `
           <div class="bet-form">
-            <input class="amt-in" type="number" min="1" max="${state.maxBet}" step="1" inputmode="numeric"
+            <input class="amt-in" type="number" min="1" max="${effectiveMaxBet(state, market)}" step="1" inputmode="numeric"
                    placeholder="金額" data-bet-amt="${key}" value="${esc(draftAmounts[key] || '')}">
             ${QUICK_AMOUNTS.map(a=>`<button type="button" class="quick" data-quick="${key}" data-amt="${a}">+${a}</button>`).join('')}
             <button class="bet-go" data-bet-btn="${key}">下注</button>
@@ -257,7 +257,7 @@ function renderMarketCard(market){
           market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
         <div class="market-pool-badge">總注金 $${fmt(total)}</div>
       </div>
-      <div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　單筆上限 $${fmt(state.maxBet)}　·　下注當下即鎖定賠率</div>
+      <div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　單筆上限 $${fmt(effectiveMaxBet(state, market))}　·　下注當下即鎖定賠率</div>
       ${market.desc?`<div class="market-desc">${esc(market.desc)}</div>`:''}
       ${banner}
       ${rows}
@@ -339,10 +339,12 @@ function attachHandlers(){
       const key = btn.dataset.quick;
       const inp = document.querySelector(`[data-bet-amt="${key}"]`);
       if(!inp) return;
+      const mid = key.split(':')[0];
+      const cap = effectiveMaxBet(state, state.markets.find(x=>x.id === mid));
       const next = (parseInt(inp.value,10) || 0) + parseInt(btn.dataset.amt,10);
-      inp.value = Math.min(next, state.maxBet);
+      inp.value = Math.min(next, cap);
       draftAmounts[key] = inp.value;
-      if(next > state.maxBet) showToast(`已達單筆上限 $${fmt(state.maxBet)}`);
+      if(next > cap) showToast(`已達單筆上限 $${fmt(cap)}`);
       inp.focus();
     };
   });
@@ -366,7 +368,8 @@ async function placeBet(marketId, optionId){
 
   const key = `${marketId}:${optionId}`;
   const inp = document.querySelector(`[data-bet-amt="${key}"]`);
-  const check = validateBetAmount(inp && inp.value, state.maxBet);
+  const localMarket = state.markets.find(x=>x.id === marketId);
+  const check = validateBetAmount(inp && inp.value, effectiveMaxBet(state, localMarket));
   if(!check.ok){ showToast(check.reason); return; }
 
   const btn = document.querySelector(`[data-bet-btn="${key}"]`);
@@ -380,10 +383,6 @@ async function placeBet(marketId, optionId){
     if(m.settled) { showToast('此盤已結算，無法下注'); return; }
     if(m.locked)  { showToast('此盤已封盤，無法下注'); return; }
 
-    const serverMax = (typeof raw.maxBet === 'number' && raw.maxBet > 0) ? raw.maxBet : DEFAULT_MAX_BET;
-    const recheck = validateBetAmount(inp.value, serverMax);
-    if(!recheck.ok){ showToast(recheck.reason); return; }
-
     if(String(m.banker || '').trim() === name){
       showToast('你是這盤的莊家，不能在自己的盤上下注');
       return;
@@ -392,7 +391,15 @@ async function placeBet(marketId, optionId){
     const fresh = normalize(raw);
     const freshPools = buildPools(fresh);
     const freshMarket = fresh.markets.find(x=>x.id === marketId);
+
+    const recheck = validateBetAmount(inp.value, effectiveMaxBet(fresh, freshMarket));
+    if(!recheck.ok){ showToast(recheck.reason); return; }
+
     const oddsAtBet = liveOdds(freshPools, freshMarket, optionId).value;
+
+    // 莊家的單一選項曝險上限：擋下這一筆，但其他選項照常開放
+    const liab = checkLiability(fresh, freshPools, freshMarket, optionId, recheck.amount, oddsAtBet);
+    if(!liab.ok){ showToast(liab.reason); return; }
 
     await db.ref(`${DB_PATH}/bets`).push({
       marketId, optionId, name, bettorId: me.id,
