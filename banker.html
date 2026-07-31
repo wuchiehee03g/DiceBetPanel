@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>吹牛王 · 莊家後台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-database-compat.js"></script>
+<script src="app.js"></script>
+</head>
+<body>
+<div class="wrap">
+  <header class="board-header banker">
+    <div class="title-block">
+      <div class="eyebrow">內部使用 · 請勿外流</div>
+      <h1>莊家<span class="accent-b">後台</span></h1>
+    </div>
+    <a class="head-link" href="index.html" target="_blank">開啟玩家下注頁 ↗</a>
+  </header>
+
+  <div id="storageStatus" class="banner warn" style="display:none;">
+    ⚠️ 連不上資料庫。操作不會生效，請檢查網路後重新整理。
+  </div>
+  <div id="storageOk" class="banner ok" style="display:none;">
+    <span class="conn-dot" id="connDot"></span><span id="connText">已連線。</span>
+  </div>
+
+  <section class="summary-strip" id="summaryStrip"></section>
+
+  <nav class="tabs" id="tabs"></nav>
+  <main id="main"></main>
+
+  <footer>
+    這個頁面沒有密碼保護 —— 資料庫是刻意開放的，拆頁只是避免玩家誤觸管理功能。<br>
+    請不要把這個網址跟玩家的網址一起發出去。
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyDMq0XabHZFuOK_Olja-cqSOMDx2ygc8i4",
+  authDomain: "dicebetpanel.firebaseapp.com",
+  databaseURL: "https://dicebetpanel-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "dicebetpanel",
+};
+const TAB_KEY = 'dbp-banker-tab';
+
+let db = null, firebaseReady = false;
+try{
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+  firebaseReady = true;
+}catch(e){ firebaseReady = false; }
+
+let state = null, pools = {};
+let activeTab = 'markets';
+let timeBucket = 10;
+let newCategory = 'binary';
+let binarySource = 'roster';
+
+function showToast(msg){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(showToast._t);
+  showToast._t = setTimeout(()=>t.classList.remove('show'), 2200);
+}
+function setStorageWarning(broken){
+  document.getElementById('storageStatus').style.display = broken ? 'block' : 'none';
+  document.getElementById('storageOk').style.display     = broken ? 'none' : 'block';
+}
+
+function boot(){
+  activeTab = localStorage.getItem(TAB_KEY) || 'markets';
+  if(!firebaseReady){
+    setStorageWarning(true);
+    state = normalize(seed()); pools = buildPools(state); render();
+    return;
+  }
+  db.ref('.info/connected').on('value', s=>{
+    const on = s.val() === true;
+    document.getElementById('connDot').classList.toggle('on', on);
+    document.getElementById('connText').textContent = on ? '已連線。' : '連線中斷，正在重連……';
+  });
+  db.ref(DB_PATH).transaction(cur => (cur === null ? seed() : undefined)).catch(()=>{});
+  db.ref(DB_PATH).on('value', s=>{
+    state = normalize(s.val()); pools = buildPools(state);
+    setStorageWarning(false); render();
+  }, err=>{
+    setStorageWarning(true);
+    showToast('讀取失敗：' + String(err).slice(0,60));
+  });
+}
+
+/* ---------- 重繪時保留輸入焦點 ---------- */
+const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
+                    'binA','binB','matchNo','matchA','matchB','matchBanker','matchPriorK'];
+function captureFocus(){
+  const el = document.activeElement;
+  if(!el || !el.dataset) return null;
+  for(const k of FOCUS_KEYS){
+    if(el.dataset[k] !== undefined){
+      const attr = 'data-' + k.replace(/[A-Z]/g, c=>'-'+c.toLowerCase());
+      return { sel:`[${attr}="${el.dataset[k]}"]`, s:el.selectionStart, e:el.selectionEnd, val:el.value };
+    }
+  }
+  return null;
+}
+function restoreFocus(f){
+  if(!f) return;
+  const el = document.querySelector(f.sel);
+  if(!el) return;
+  if(el.value !== f.val && f.val !== undefined) el.value = f.val;
+  el.focus();
+  try{ el.setSelectionRange(f.s, f.e); }catch(err){}
+}
+
+function render(){
+  const f = captureFocus();
+  renderSummary();
+  renderTabs();
+  const main = document.getElementById('main');
+  if(activeTab === 'markets')      main.innerHTML = renderMarketsTab();
+  else if(activeTab === 'reports') main.innerHTML = renderReportsTab();
+  else                             main.innerHTML = renderSettingsTab();
+  attachHandlers();
+  restoreFocus(f);
+}
+
+function renderSummary(){
+  const exp = bankerExposure(state, pools);
+  const bettors = new Set(state.bets.map(b=>b.bettorId || b.name)).size;
+  const open = state.markets.filter(m=>!m.settled).length;
+  const netCls = exp.settledNet >= 0 ? 'pos' : 'neg';
+  const worstCls = exp.worstTotal >= 0 ? 'pos' : 'neg';
+  document.getElementById('summaryStrip').innerHTML = `
+    <div class="stat-card blue"><div class="num">$${fmt(exp.staked)}</div><div class="lbl">全場總注金</div></div>
+    <div class="stat-card blue"><div class="num">${state.bets.length}</div><div class="lbl">注單數</div></div>
+    <div class="stat-card blue"><div class="num">${bettors}</div><div class="lbl">參與人數</div></div>
+    <div class="stat-card"><div class="num ${netCls}">${exp.settledNet>=0?'+':''}${fmt(exp.settledNet)}</div><div class="lbl">已結算莊家淨收益</div></div>
+    <div class="stat-card"><div class="num ${worstCls}">${exp.worstTotal>=0?'+':''}${fmt(exp.worstTotal)}</div><div class="lbl">最壞情況（含未結算 ${open} 盤）</div></div>
+  `;
+}
+
+function renderTabs(){
+  const groups = [
+    { key:'markets', label:`盤口管理 (${state.markets.length})` },
+    { key:'reports', label:'資料報表' },
+    { key:'settings', label:'設定與備份' },
+  ];
+  const tabs = document.getElementById('tabs');
+  tabs.innerHTML = groups.map(g=>
+    `<button class="tab-btn blue ${activeTab===g.key?'active blue':''}" data-tab="${g.key}">${esc(g.label)}</button>`
+  ).join('');
+  tabs.querySelectorAll('.tab-btn').forEach(b=>{
+    b.onclick = ()=>{
+      activeTab = b.dataset.tab;
+      try{ localStorage.setItem(TAB_KEY, activeTab); }catch(e){}
+      render();
+    };
+  });
+}
+
+/* ============================================================
+   盤口管理
+   ============================================================ */
+function renderMarketsTab(){
+  return renderMatchPanel() + renderCreatePanel() + renderBatchPanel() +
+    (state.markets.length === 0
+      ? `<div class="empty-note">還沒有任何盤口。用上面的表單開第一個。</div>`
+      : state.markets.map(renderMarketCard).join(''));
+}
+
+// 把「定價黏性」翻譯成看得懂的體感：一筆滿額注會把 2.00 推到哪
+function impactHint(priorK){
+  const im = maxBetImpact(priorK, state.maxBet);
+  if(!im) return '定價黏性＝相當於莊家先押多少錢在自己開的價上。';
+  const warn = im.dropPct >= 25;
+  return `定價黏性＝相當於莊家先押多少錢在自己開的價上。<br>`
+    + `以目前上限 $${fmt(state.maxBet)} 計算，<b>一筆滿額注會把 2.00 的賠率推到 ${im.after.toFixed(2)}</b>`
+    + `（移動 ${im.dropPct}%）${warn ? '　⚠ 波動偏大，建議把黏性調高' : ''}`;
+}
+
+function renderMatchPanel(){
+  const used = [...new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo))];
+  const bigOpts = [];
+  for(let i=2;i<=MAX_HP;i++){
+    bigOpts.push(`<option value="${i}" ${i===DEFAULT_BIG_MIN?'selected':''}>${i} 格以上為大</option>`);
+  }
+  return `<div class="panel">
+    <h2>開一場單挑賽事（一次建三個盤）</h2>
+    <div class="panel-grid">
+      <div class="form-col">
+        <h3>賽事</h3>
+        <input data-match-no="1" id="matchNo" placeholder="賽事編號，例如：8-1" maxlength="12">
+        <input data-match-a="1" id="matchA" placeholder="參賽玩家一（手動輸入）" maxlength="20">
+        <input data-match-b="1" id="matchB" placeholder="參賽玩家二（手動輸入）" maxlength="20">
+        ${used.length ? `<p class="form-hint">已開過的編號：${used.map(esc).join('、')}</p>` : ''}
+      </div>
+      <div class="form-col">
+        <h3>莊家與定價</h3>
+        <input data-match-banker="1" id="matchBanker" placeholder="莊家名字（必填）" maxlength="20">
+        <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
+               value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
+        <select id="matchBigMin">${bigOpts.join('')}</select>
+        <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K)}</p>
+      </div>
+      <div class="form-col">
+        <h3>會建立這三個盤</h3>
+        <p class="form-hint">
+          · 第 N 場 · <b>誰獲勝</b>（兩位玩家）<br>
+          · 第 N 場 · <b>結束比分 大/小</b><br>
+          · 第 N 場 · <b>結束比分 單/雙</b><br><br>
+          比分指<b>獲勝者剩餘血格</b>（1~5）。單 = 1、3、5，雙 = 2、4；
+          大小分界可在左邊調整，規則會寫進盤口說明讓大家看得到。
+        </p>
+        <button type="button" id="matchBtn">建立這場的三個盤</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCreatePanel(){
+  const playerOpts = state.players.map((p,i)=>`<option value="p${i}">${esc(p)}</option>`).join('');
+  return `<div class="panel">
+    <h2>開新盤口</h2>
+    <div class="panel-grid">
+      <div class="form-col">
+        <h3>1. 選分類</h3>
+        <div class="radio-row">
+          ${CATEGORIES.map(c=>`<label><input type="radio" name="cat" value="${c.key}" ${newCategory===c.key?'checked':''}> ${esc(c.label)}</label>`).join('')}
+        </div>
+        <p class="form-hint">${esc((CATEGORIES.find(c=>c.key===newCategory)||{}).hint || '')}</p>
+      </div>
+      <div class="form-col">
+        <h3>2. 基本資料</h3>
+        <input data-new-title="1" id="newTitle" placeholder="盤口名稱，例如：八強 A 桌誰晉級" maxlength="80">
+        <input data-new-banker="1" id="newBanker" placeholder="莊家名字（必填）" maxlength="20">
+        <input data-new-prior-k="1" id="newPriorK" type="number" min="100" step="1000"
+               value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
+        <p class="form-hint" id="createImpact">${impactHint(DEFAULT_PRIOR_K)}</p>
+      </div>
+      <div class="form-col">
+        <h3>3. 選項</h3>
+        ${newCategory === 'multi' ? `
+          <p class="form-hint">自動使用 <b>16 人名單</b>，標籤會跟著名單同步。</p>
+        ` : newCategory === 'binary' ? `
+          <div class="radio-row">
+            <label><input type="radio" name="binsrc" value="roster" ${binarySource==='roster'?'checked':''}> 從名單挑兩位</label>
+            <label><input type="radio" name="binsrc" value="custom" ${binarySource==='custom'?'checked':''}> 自由輸入</label>
+          </div>
+          ${binarySource === 'roster' ? `
+            <select data-bin-a="1" id="binA">${playerOpts}</select>
+            <select data-bin-b="1" id="binB">${playerOpts}</select>
+            <p class="form-hint">名字會跟著玩家名單同步，適合單挑桌。</p>
+          ` : `
+            <input data-bin-a="1" id="binA" placeholder="選項一，例如：大" maxlength="30">
+            <input data-bin-b="1" id="binB" placeholder="選項二，例如：小" maxlength="30">
+            <p class="form-hint">適合單雙、大小這類非選手的盤。</p>
+          `}
+        ` : `
+          <input data-new-options="1" id="newOptions" placeholder="選項用逗號分隔，例如：有,沒有,不確定" maxlength="200">
+          <p class="form-hint">至少兩個選項。</p>
+        `}
+        <button type="button" id="createBtn">開盤</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderBatchPanel(){
+  const targets = state.markets.filter(m=>!m.settled && usesPlayerRoster(m));
+  if(targets.length === 0) return '';
+  return `<div class="panel">
+    <h2>一次結算所有多選項盤</h2>
+    <div class="form-col" style="max-width:420px;">
+      <select id="seriesWinner">
+        <option value="">選擇冠軍／結果...</option>
+        ${state.players.map((p,i)=>`<option value="p${i}">${esc(p)}</option>`).join('')}
+      </select>
+      <p class="form-hint">會一次結算這 ${targets.length} 個盤口：<br>
+        ${targets.map(m=>`· ${esc(m.title)}（$${fmt(marketTotal(pools,m))}）`).join('<br>')}</p>
+      <button type="button" id="seriesBtn">全部結算</button>
+    </div>
+  </div>`;
+}
+
+function renderMarketCard(market){
+  const total = marketTotal(pools, market);
+  const maxPool = Math.max(1, ...market.options.map(o=>poolOf(pools, market.id, o.id)));
+  const info = market.settled ? settleInfo(state, pools, market) : null;
+
+  const rows = market.options.map((opt, idx)=>{
+    const pool = poolOf(pools, market.id, opt.id);
+    const isWinner = market.settled && opt.id === market.winnerId;
+    const lo = liveOdds(pools, market, opt.id);
+    const moved = lo.auto && Math.abs(lo.value - lo.opening) >= 0.01;
+    const key = `${market.id}:${opt.id}`;
+    return `
+      <div class="option-row ${isWinner?'is-winner':''}">
+        <div class="pip">${DICE_PIPS[idx % 6]}</div>
+        <div class="opt-main">
+          <div class="opt-label-line">
+            <span class="lbl">${esc(optionLabel(state, market, opt))}${isWinner?' 🏆':''}</span>
+            <span class="odds-wrap">
+              <span class="odds">${lo.value.toFixed(2)}x</span>
+              ${moved?`<span class="odds-open">開 ${lo.opening.toFixed(2)}</span>`:''}
+            </span>
+          </div>
+          <div class="bar-track"><div class="bar-fill blue" style="width:${total>0?(pool/maxPool*100):0}%"></div></div>
+          <div class="pool-amt">注金：$${fmt(pool)}</div>
+          ${!market.settled ? `
+          <div class="odds-edit">
+            <label>${market.autoPrice ? '初始定價' : '掛牌賠率'}</label>
+            <input type="number" min="1.01" step="0.05" inputmode="decimal"
+                   data-odds-in="${key}" value="${opt.odds.toFixed(2)}">
+            <span class="odds-note">${market.autoPrice ? '掛牌價由此價與注額推導' : '改了只影響之後的新注單'}</span>
+          </div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  let banner = '';
+  if(market.settled){
+    const winOpt = market.options.find(o=>o.id === market.winnerId);
+    const net = info.bankerNet;
+    banner = `<div class="winner-banner">🏆 結果：${esc(optionLabel(state, market, winOpt))}
+      <br>收到注金 $${fmt(info.total)}　派彩 $${fmt(info.payoutTotal)}
+      <br>莊家淨${net>=0?'收益':'虧損'}：<span class="${net>=0?'profit-pos':'profit-neg'}">${net>=0?'+':''}${fmt(net)}</span>
+      ${info.empty?'<br>（這盤沒有人下注）':''}</div>`;
+  }else if(market.locked){
+    banner = `<div class="lock-note">🔒 已封盤，玩家無法下注。</div>`;
+  }
+
+  const margin = bookMargin(market) * 100;
+  const controls = market.settled ? '' : `
+    <div class="book-controls">
+      <label><input type="checkbox" data-auto-toggle="${market.id}" ${market.autoPrice?'checked':''}> 自動依下注額調價</label>
+      ${market.autoPrice ? `<label>定價黏性
+        <input type="number" min="100" step="1000" inputmode="numeric" data-prior-k="${market.id}" value="${market.priorK}"></label>
+        ${(()=>{ const im = maxBetImpact(market.priorK, state.maxBet);
+                 return im ? `<span class="odds-note">滿額注移動 ${im.dropPct}%</span>` : ''; })()}` : ''}
+      <span class="bc-margin ${margin>=0?'':'neg'}">初始定價利潤率 ${margin>=0?'+':''}${margin.toFixed(1)}%${margin<0?'　⚠ 負值，長期不利':''}</span>
+    </div>`;
+
+  const actions = `
+    <div class="settle-bar">
+      ${market.settled ? `<button class="undo-btn" data-undo-btn="${market.id}">撤銷結算</button>` : `
+        <button class="lock-btn" data-lock-btn="${market.id}">${market.locked?'重新開盤':'封盤'}</button>
+        <select data-settle-select="${market.id}">
+          <option value="">選擇正確結果...</option>
+          ${market.options.map(o=>`<option value="${o.id}">${esc(optionLabel(state,market,o))}</option>`).join('')}
+        </select>
+        <button data-settle-btn="${market.id}">結算並派彩</button>
+      `}
+      <button class="del-btn" data-del-btn="${market.id}">刪除盤口</button>
+    </div>`;
+
+  return `
+    <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''}">
+      <div class="market-head">
+        <h2>${esc(market.title)}${market.matchNo?`<span class="chip match">第 ${esc(market.matchNo)} 場</span>`:''}<span class="chip cat">${esc(categoryLabel(market.category))}</span>${
+          market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
+        <div class="market-pool-badge">總注金 $${fmt(total)}</div>
+      </div>
+      <div class="banker-line">莊家：<b>${esc(market.banker)}</b></div>
+      ${banner}
+      ${controls}
+      ${rows}
+      ${!market.settled ? renderBankerRisk(market) : renderLedger(market)}
+      ${actions}
+    </div>`;
+}
+
+function renderBankerRisk(market){
+  const staked = marketTotal(pools, market);
+  if(staked <= 0){
+    return `<div class="banker-risk"><div class="br-title">莊家風險</div>
+      <div class="br-empty">還沒有人下注，目前沒有曝險。</div></div>`;
+  }
+  const funded = market.options.filter(o => poolOf(pools, market.id, o.id) > 0);
+  const rows = funded.map(o=>{
+    const net = bankerNetIfWins(state, pools, market, o.id);
+    return `<tr><td>${esc(optionLabel(state, market, o))} 開出</td>
+      <td class="num ${net>=0?'profit-pos':'profit-neg'}">${net>=0?'+':''}${fmt(net)}</td></tr>`;
+  }).join('');
+  const hasUnbacked = market.options.some(o => poolOf(pools, market.id, o.id) <= 0);
+  const worst = worstCase(state, pools, market);
+  return `<div class="banker-risk">
+    <div class="br-title">莊家 ${esc(market.banker)} 的風險　·　已收注金 $${fmt(staked)}</div>
+    <div class="table-scroll"><table class="ledger"><tbody>
+      ${rows}
+      ${hasUnbacked ? `<tr><td>其他沒人押的選項開出</td><td class="num profit-pos">+${fmt(staked)}</td></tr>` : ''}
+      <tr class="br-worst"><td><b>最壞情況</b></td>
+        <td class="num ${worst>=0?'profit-pos':'profit-neg'}"><b>${worst>=0?'+':''}${fmt(worst)}</b></td></tr>
+    </tbody></table></div>
+  </div>`;
+}
+
+function renderLedger(market){
+  const all = state.bets.filter(b => b.marketId === market.id);
+  if(all.length === 0) return `<div class="empty-note">這盤沒有人下注。</div>`;
+  const rows = all.map(b=>{
+    const o = betOutcome(state, pools, b);
+    const opt = market.options.find(x=>x.id === b.optionId);
+    return `<tr>
+      <td>${esc(b.name)}</td>
+      <td>${esc(optionLabel(state, market, opt))}</td>
+      <td class="num">${betOdds(b).toFixed(2)}x</td>
+      <td class="num">$${fmt(b.amount)}</td>
+      <td class="num">${o.status==='win' ? '$'+fmt(o.payout) : '—'}</td>
+      <td class="num ${o.profit>=0?'profit-neg':'profit-pos'}">${(-o.profit)>=0?'+':''}${fmt(-o.profit)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="table-scroll"><table class="ledger">
+    <thead><tr><th>下注者</th><th>押</th><th class="num">鎖定賠率</th><th class="num">下注</th><th class="num">派彩</th><th class="num">莊家淨</th></tr></thead>
+    <tbody>${rows}</tbody></table></div>`;
+}
+
+/* ============================================================
+   報表
+   ============================================================ */
+function renderReportsTab(){
+  return renderBettorReport() + renderCategoryReport() + renderTimeReport();
+}
+
+function renderBettorReport(){
+  const rows = reportByBettor(state, pools);
+  if(rows.length === 0) return `<div class="panel"><h2>by 玩家</h2><div class="empty-note">還沒有任何下注。</div></div>`;
+  const totals = rows.reduce((a,r)=>({
+    bets:a.bets+r.bets, staked:a.staked+r.staked,
+    settledProfit:a.settledProfit+r.settledProfit, pending:a.pending+r.pending
+  }), {bets:0,staked:0,settledProfit:0,pending:0});
+  return `<div class="panel"><h2>by 玩家</h2>
+    <div class="table-scroll"><table class="ledger">
+      <thead><tr><th>暱稱</th><th class="num">注單</th><th class="num">總投入</th>
+        <th class="num">玩家已結算損益</th><th class="num">未開注額</th><th class="num">莊家對他淨收益</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td>${esc(r.name)}</td>
+        <td class="num">${r.bets}</td>
+        <td class="num">$${fmt(r.staked)}</td>
+        <td class="num ${r.settledProfit>=0?'profit-pos':'profit-neg'}">${r.settledProfit>=0?'+':''}${fmt(r.settledProfit)}</td>
+        <td class="num">${r.pending>0?'$'+fmt(r.pending):'—'}</td>
+        <td class="num ${r.bankerNet>=0?'profit-pos':'profit-neg'}">${r.bankerNet>=0?'+':''}${fmt(r.bankerNet)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr>
+        <td>合計 ${rows.length} 人</td>
+        <td class="num">${totals.bets}</td>
+        <td class="num">$${fmt(totals.staked)}</td>
+        <td class="num ${totals.settledProfit>=0?'profit-pos':'profit-neg'}">${totals.settledProfit>=0?'+':''}${fmt(totals.settledProfit)}</td>
+        <td class="num">${totals.pending>0?'$'+fmt(totals.pending):'—'}</td>
+        <td class="num ${-totals.settledProfit>=0?'profit-pos':'profit-neg'}">${-totals.settledProfit>=0?'+':''}${fmt(-totals.settledProfit)}</td>
+      </tr></tfoot>
+    </table></div></div>`;
+}
+
+function renderCategoryReport(){
+  const rows = reportByCategory(state, pools);
+  return `<div class="panel"><h2>by 盤口類型</h2>
+    <div class="table-scroll"><table class="ledger">
+      <thead><tr><th>類型</th><th class="num">盤口</th><th class="num">已結算</th><th class="num">注單</th>
+        <th class="num">總注金</th><th class="num">平均單注</th><th class="num">莊家淨收益</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td>${esc(r.label)}</td>
+        <td class="num">${r.markets}</td>
+        <td class="num">${r.settled}</td>
+        <td class="num">${r.bets}</td>
+        <td class="num">$${fmt(r.staked)}</td>
+        <td class="num">${r.bets?'$'+fmt(r.avgBet):'—'}</td>
+        <td class="num ${r.bankerNet>=0?'profit-pos':'profit-neg'}">${r.bankerNet>=0?'+':''}${fmt(r.bankerNet)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div></div>`;
+}
+
+function renderTimeReport(){
+  const rows = reportByTime(state, timeBucket);
+  const maxStake = Math.max(1, ...rows.map(r=>r.staked));
+  const fmtTime = (t)=>{
+    const d = new Date(t);
+    const p = n=>String(n).padStart(2,'0');
+    return `${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  return `<div class="panel"><h2>by 時間</h2>
+    <div class="seg-btns">
+      <button data-bucket="10" class="${timeBucket===10?'active':''}">10 分鐘</button>
+      <button data-bucket="60" class="${timeBucket===60?'active':''}">1 小時</button>
+    </div>
+    ${rows.length === 0 ? `<div class="empty-note">還沒有任何下注。</div>` : `
+    <div class="table-scroll"><table class="ledger">
+      <thead><tr><th>時段</th><th class="num">注單</th><th class="num">注金</th><th class="bar-cell">分布</th><th class="num">累計</th></tr></thead>
+      <tbody>${rows.map(r=>`<tr>
+        <td>${fmtTime(r.t)}</td>
+        <td class="num">${r.bets}</td>
+        <td class="num">$${fmt(r.staked)}</td>
+        <td class="bar-cell"><div class="report-bar" style="width:${(r.staked/maxStake*100).toFixed(1)}%"></div></td>
+        <td class="num">$${fmt(r.cumulative)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}
+  </div>`;
+}
+
+/* ============================================================
+   設定
+   ============================================================ */
+function renderSettingsTab(){
+  return `<div class="panel">
+    <h2>設定與備份</h2>
+    <div class="panel-grid">
+      <div>
+        <h3>16 位玩家名單</h3>
+        <div id="playerEditor">
+          ${state.players.map((p,i)=>`<input data-pidx="${i}" value="${esc(p)}" maxlength="20">`).join('')}
+        </div>
+      </div>
+      <div class="form-col">
+        <h3>單筆投注上限</h3>
+        <input data-max-bet="1" id="maxBetInput" type="number" min="100" step="100" value="${state.maxBet}">
+        <p class="form-hint">目前 <b>$${fmt(state.maxBet)}</b>。上限越小，自動調價的波動越平緩。改完按 Enter 或點其他地方生效。</p>
+      </div>
+      <div class="form-col">
+        <h3>備份</h3>
+        <button type="button" class="danger-btn gold-btn" id="exportBtn">匯出備份（下載 JSON）</button>
+        <label class="form-hint">匯入備份（會覆蓋目前所有資料）
+          <input type="file" id="importFile" accept="application/json" style="display:block;margin-top:6px;">
+        </label>
+        <button type="button" class="danger-btn" id="resetBtn" style="margin-top:10px;">重置整個賽事</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* ============================================================
+   事件
+   ============================================================ */
+function attachHandlers(){
+  document.querySelectorAll('input[name=cat]').forEach(r=>{
+    r.onchange = ()=>{ newCategory = r.value; render(); };
+  });
+  document.querySelectorAll('input[name=binsrc]').forEach(r=>{
+    r.onchange = ()=>{ binarySource = r.value; render(); };
+  });
+  const createBtn = document.getElementById('createBtn');
+  if(createBtn) createBtn.onclick = createMarket;
+  const matchBtn = document.getElementById('matchBtn');
+  if(matchBtn) matchBtn.onclick = createMatch;
+
+  // 調整黏性時即時更新體感提示
+  [['matchPriorK','matchImpact'], ['newPriorK','createImpact']].forEach(([inId, outId])=>{
+    const inp = document.getElementById(inId), out = document.getElementById(outId);
+    if(inp && out) inp.oninput = ()=>{ out.innerHTML = impactHint(parseFloat(inp.value)); };
+  });
+
+  const seriesBtn = document.getElementById('seriesBtn');
+  if(seriesBtn) seriesBtn.onclick = settleSeries;
+
+  document.querySelectorAll('[data-bucket]').forEach(b=>{
+    b.onclick = ()=>{ timeBucket = parseInt(b.dataset.bucket,10); render(); };
+  });
+
+  document.querySelectorAll('[data-odds-in]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const [mid, oid] = inp.dataset.oddsIn.split(':');
+      const v = Math.round(parseFloat(inp.value) * 100) / 100;
+      if(!(v > 1)){ showToast('賠率必須大於 1.00'); render(); return; }
+      try{
+        await db.ref(`${DB_PATH}/markets/${mid}/options/${oid}/odds`).set(v);
+        showToast(`賠率已改為 ${v.toFixed(2)}x`);
+      }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+    };
+  });
+  document.querySelectorAll('[data-auto-toggle]').forEach(cb=>{
+    cb.onchange = async ()=>{
+      try{
+        await db.ref(`${DB_PATH}/markets/${cb.dataset.autoToggle}/autoPrice`).set(cb.checked);
+        showToast(cb.checked ? '已開啟自動調價' : '已改為手動定價');
+      }catch(e){ showToast('切換失敗：' + String(e).slice(0,60)); }
+    };
+  });
+  document.querySelectorAll('[data-prior-k]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const v = Math.round(parseFloat(inp.value));
+      if(!(v > 0)){ showToast('定價黏性必須是正數'); render(); return; }
+      try{
+        await db.ref(`${DB_PATH}/markets/${inp.dataset.priorK}/priorK`).set(v);
+        showToast(`定價黏性已設為 ${fmt(v)}`);
+      }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+    };
+  });
+  document.querySelectorAll('[data-lock-btn]').forEach(b=> b.onclick = ()=> toggleLock(b.dataset.lockBtn));
+  document.querySelectorAll('[data-settle-btn]').forEach(b=> b.onclick = ()=> settleMarket(b.dataset.settleBtn));
+  document.querySelectorAll('[data-undo-btn]').forEach(b=> b.onclick = ()=> undoSettle(b.dataset.undoBtn));
+  document.querySelectorAll('[data-del-btn]').forEach(b=> b.onclick = ()=> deleteMarket(b.dataset.delBtn));
+
+  document.querySelectorAll('[data-pidx]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const i = parseInt(inp.dataset.pidx, 10);
+      const v = inp.value.trim() || `選手${i+1}`;
+      try{ await db.ref(`${DB_PATH}/players/${i}`).set(v); }
+      catch(e){ showToast('改名失敗：' + String(e).slice(0,60)); }
+    };
+  });
+  const maxBetInput = document.getElementById('maxBetInput');
+  if(maxBetInput) maxBetInput.onchange = async ()=>{
+    const v = Math.round(parseFloat(maxBetInput.value));
+    if(!(v > 0)){ showToast('上限必須是正數'); render(); return; }
+    try{
+      await db.ref(`${DB_PATH}/maxBet`).set(v);
+      showToast(`單筆上限已設為 $${fmt(v)}`);
+    }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+  };
+
+  const exportBtn = document.getElementById('exportBtn');
+  if(exportBtn) exportBtn.onclick = doExport;
+  const importFile = document.getElementById('importFile');
+  if(importFile) importFile.onchange = doImport;
+  const resetBtn = document.getElementById('resetBtn');
+  if(resetBtn) resetBtn.onclick = doReset;
+}
+
+async function createMatch(){
+  const built = buildMatchMarkets({
+    matchNo: document.getElementById('matchNo').value,
+    playerA: document.getElementById('matchA').value,
+    playerB: document.getElementById('matchB').value,
+    banker:  document.getElementById('matchBanker').value,
+    priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DEFAULT_PRIOR_K)),
+    bigMin:  parseInt(document.getElementById('matchBigMin').value, 10),
+  });
+  if(built.error){ showToast(built.error); return; }
+
+  const dup = state.markets.some(m => m.matchNo === String(document.getElementById('matchNo').value).trim());
+  if(dup && !confirm(`第 ${document.getElementById('matchNo').value} 場已經開過盤了，確定要再開一組嗎？`)) return;
+
+  try{
+    const base = Date.now();
+    for(let i=0;i<built.markets.length;i++){
+      await db.ref(`${DB_PATH}/markets`).push({ ...built.markets[i], order: base + i });
+    }
+    document.getElementById('matchNo').value = '';
+    document.getElementById('matchA').value = '';
+    document.getElementById('matchB').value = '';
+    showToast('已建立這場的三個盤口');
+    render();
+  }catch(e){ showToast('建立失敗：' + String(e).slice(0,60)); }
+}
+
+async function createMarket(){
+  const title = (document.getElementById('newTitle').value || '').trim();
+  const banker = (document.getElementById('newBanker').value || '').trim();
+  const priorK = Math.max(100, Math.round(parseFloat(document.getElementById('newPriorK').value) || DEFAULT_PRIOR_K));
+  if(!title)  { showToast('請輸入盤口名稱'); return; }
+  if(!banker) { showToast('請輸入莊家名字'); return; }
+
+  const options = {};
+  if(newCategory === 'multi'){
+    for(let i=0;i<PLAYER_COUNT;i++) options['p'+i] = { order:i, odds:DEFAULT_ODDS };
+  }else if(newCategory === 'binary'){
+    const a = document.getElementById('binA').value;
+    const b = document.getElementById('binB').value;
+    if(binarySource === 'roster'){
+      if(a === b){ showToast('兩位選手不能相同'); return; }
+      options[a] = { order:0, odds:DEFAULT_ODDS };
+      options[b] = { order:1, odds:DEFAULT_ODDS };
+    }else{
+      const la = (a||'').trim(), lb = (b||'').trim();
+      if(!la || !lb){ showToast('請輸入兩個選項'); return; }
+      options[uid()] = { label:la, order:0, odds:DEFAULT_ODDS };
+      options[uid()] = { label:lb, order:1, odds:DEFAULT_ODDS };
+    }
+  }else{
+    const labels = (document.getElementById('newOptions').value || '')
+      .split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+    if(labels.length < 2){ showToast('至少需要兩個選項'); return; }
+    labels.forEach((label,i)=>{ options[uid()] = { label, order:i, odds:DEFAULT_ODDS }; });
+  }
+
+  try{
+    await db.ref(`${DB_PATH}/markets`).push({
+      title, banker, category:newCategory,
+      desc:'', autoPrice:true, priorK,
+      order: Date.now(), locked:false, settled:false, winnerId:null,
+      options
+    });
+    document.getElementById('newTitle').value = '';
+    showToast('盤口已開');
+    render();
+  }catch(e){ showToast('開盤失敗：' + String(e).slice(0,60)); }
+}
+
+async function toggleLock(marketId){
+  const m = state.markets.find(x=>x.id === marketId);
+  if(!m) return;
+  try{
+    await db.ref(`${DB_PATH}/markets/${marketId}/locked`).set(!m.locked);
+    showToast(m.locked ? '已重新開盤' : '已封盤');
+  }catch(e){ showToast('操作失敗：' + String(e).slice(0,60)); }
+}
+
+async function settleMarket(marketId){
+  const sel = document.querySelector(`[data-settle-select="${marketId}"]`);
+  const winnerId = sel && sel.value;
+  if(!winnerId){ showToast('請先選擇結果'); return; }
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market) return;
+  const winOpt = market.options.find(o=>o.id === winnerId);
+  const info = settleInfo(state, pools, { ...market, winnerId });
+  if(!confirm(
+    `確定以「${optionLabel(state, market, winOpt)}」結算「${market.title}」？\n\n` +
+    `收到注金 $${fmt(info.total)}\n派彩 $${fmt(info.payoutTotal)}\n` +
+    `莊家淨${info.bankerNet>=0?'收益':'虧損'}：${info.bankerNet>=0?'+':''}${fmt(info.bankerNet)}\n\n` +
+    `結算後無法再下注，但可以「撤銷結算」。`
+  )) return;
+  try{
+    await db.ref(`${DB_PATH}/markets/${marketId}`).update({ settled:true, winnerId, locked:true });
+    showToast('已結算並派彩');
+  }catch(e){ showToast('結算失敗：' + String(e).slice(0,60)); }
+}
+
+async function settleSeries(){
+  const sel = document.getElementById('seriesWinner');
+  const winnerId = sel && sel.value;
+  if(!winnerId){ showToast('請先選擇結果'); return; }
+  const targets = state.markets.filter(m=>!m.settled && usesPlayerRoster(m));
+  if(targets.length === 0){ showToast('沒有可結算的盤口'); return; }
+  const name = state.players[parseInt(winnerId.slice(1),10)];
+  const lines = targets.map(m=>{
+    const info = settleInfo(state, pools, { ...m, winnerId });
+    return `· ${m.title}：派彩 $${fmt(info.payoutTotal)}，莊家淨 ${info.bankerNet>=0?'+':''}${fmt(info.bankerNet)}`;
+  });
+  if(!confirm(`確定以「${name}」一次結算下列 ${targets.length} 個多選項盤？\n\n${lines.join('\n')}\n\n每個盤都還可以個別撤銷。`)) return;
+  const updates = {};
+  targets.forEach(m=>{
+    updates[`markets/${m.id}/settled`]  = true;
+    updates[`markets/${m.id}/winnerId`] = winnerId;
+    updates[`markets/${m.id}/locked`]   = true;
+  });
+  try{
+    await db.ref(DB_PATH).update(updates);
+    showToast(`已一次結算 ${targets.length} 個盤口`);
+  }catch(e){ showToast('批次結算失敗：' + String(e).slice(0,60)); }
+}
+
+async function undoSettle(marketId){
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market || !market.settled) return;
+  const info = settleInfo(state, pools, market);
+  const winOpt = market.options.find(o=>o.id === market.winnerId);
+  if(!confirm(
+    `確定撤銷「${market.title}」的結算？\n\n` +
+    `原本判定：${optionLabel(state, market, winOpt)}（莊家淨 ${info.bankerNet>=0?'+':''}${fmt(info.bankerNet)}）\n\n` +
+    `撤銷後派彩作廢，${state.bets.filter(b=>b.marketId===marketId).length} 筆注單全部保留。\n` +
+    `盤口會維持封盤，要重新收注請再按「重新開盤」。`
+  )) return;
+  try{
+    await db.ref(`${DB_PATH}/markets/${marketId}`).update({ settled:false, winnerId:null, locked:true });
+    showToast('已撤銷結算，盤口維持封盤');
+  }catch(e){ showToast('撤銷失敗：' + String(e).slice(0,60)); }
+}
+
+async function deleteMarket(marketId){
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market) return;
+  const related = state.bets.filter(b=>b.marketId === marketId);
+  const total = marketTotal(pools, market);
+  if(!confirm(
+    `確定刪除盤口「${market.title}」？\n\n` +
+    (related.length ? `這盤有 ${related.length} 筆注單、總注金 $${fmt(total)}，會一併永久刪除。\n` : `這盤還沒有人下注。\n`) +
+    `無法復原。`
+  )) return;
+  if(related.length && !confirm(
+    `再確認一次：${related.length} 筆注單（共 $${fmt(total)}）會被刪掉，無法復原。\n\n若只是想停止收注，按取消後改用「封盤」。`
+  )) return;
+  const updates = { [`markets/${marketId}`]: null };
+  related.forEach(b=>{ updates[`bets/${b.id}`] = null; });
+  try{
+    await db.ref(DB_PATH).update(updates);
+    showToast(related.length ? `盤口與 ${related.length} 筆注單已刪除` : '盤口已刪除');
+  }catch(e){ showToast('刪除失敗：' + String(e).slice(0,60)); }
+}
+
+async function doExport(){
+  let payload = null;
+  try{ payload = (await db.ref(DB_PATH).once('value')).val(); }catch(e){}
+  if(!payload){ showToast('沒有可匯出的資料'); return; }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type:'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `吹牛王投注備份-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('備份已下載');
+}
+
+function doImport(e){
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (ev)=>{
+    try{
+      const parsed = JSON.parse(ev.target.result);
+      if(!parsed || typeof parsed !== 'object') throw new Error('格式不對');
+      if(confirm('確定要用這個備份檔覆蓋目前的所有資料嗎？')){
+        await db.ref(DB_PATH).set(parsed);
+        showToast('備份已還原');
+      }
+    }catch(err){ showToast('這個檔案看起來不是有效的備份檔'); }
+    e.target.value = '';
+  };
+  reader.readAsText(file);
+}
+
+async function doReset(){
+  if(!confirm('這會清空所有盤口與下注紀錄，確定重置整個賽事嗎？\n\n建議先按「匯出備份」。')) return;
+  if(!confirm('再確認一次：所有人的注單都會消失，且無法復原。')) return;
+  try{
+    await db.ref(DB_PATH).set(seed());
+    showToast('賽事已重置');
+  }catch(e){ showToast('重置失敗：' + String(e).slice(0,60)); }
+}
+
+boot();
+</script>
+</body>
+</html>

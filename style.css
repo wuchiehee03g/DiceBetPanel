@@ -1,0 +1,334 @@
+/* DiceBetPanel — 玩家頁與莊家後台共用樣式 */
+
+:root{
+  --bg: #14110d;
+  --felt: #123524;
+  --felt-light: #1a4633;
+  --ivory: #ece4d3;
+  --ivory-dim: #b9b09c;
+  --gold: #c9a227;
+  --gold-bright: #e6c34d;
+  --red: #9a3324;
+  --red-bright: #c14a35;
+  --green: #7fbf6a;
+  --blue: #7aa2f7;
+  --blue-bright: #a9c1ff;
+  --line: rgba(236,228,211,0.14);
+}
+*{box-sizing:border-box;}
+body{
+  margin:0;
+  background:
+    radial-gradient(circle at 15% 0%, rgba(201,162,39,0.07), transparent 45%),
+    radial-gradient(circle at 85% 100%, rgba(154,51,36,0.08), transparent 45%),
+    var(--bg);
+  color:var(--ivory);
+  font-family:'Noto Sans TC','Inter',sans-serif;
+  padding:20px 14px 60px;
+  min-height:100vh;
+  -webkit-text-size-adjust:100%;
+}
+.wrap{max-width:1040px;margin:0 auto;}
+
+/* ---------- header ---------- */
+.eyebrow{
+  font-family:'Oswald','Noto Sans TC',sans-serif;
+  font-size:11px;letter-spacing:4px;color:var(--gold);
+  text-transform:uppercase;opacity:0.85;
+}
+h1{
+  font-family:'Oswald','Noto Sans TC',sans-serif;
+  font-weight:700;font-size:30px;letter-spacing:1px;margin:4px 0 0;
+}
+h1 .accent{color:var(--gold-bright);}
+h1 .accent-b{color:var(--blue-bright);}
+header.board-header{
+  display:flex;flex-wrap:wrap;gap:16px;
+  justify-content:space-between;align-items:flex-end;
+  border-bottom:2px solid var(--gold);padding-bottom:16px;margin-bottom:16px;
+}
+header.board-header.banker{border-bottom-color:var(--blue);}
+.head-link{
+  font-size:12px;color:var(--ivory-dim);text-decoration:none;
+  border:1px solid var(--line);border-radius:20px;padding:7px 14px;
+  transition:all .15s;white-space:nowrap;
+}
+.head-link:hover{border-color:var(--gold);color:var(--gold-bright);}
+
+/* ---------- banners ---------- */
+.banner{margin-bottom:14px;padding:10px 14px;border-radius:6px;font-size:12.5px;line-height:1.6;}
+.banner.warn{border:1px solid var(--red-bright);background:rgba(154,51,36,0.15);color:var(--ivory);}
+.banner.ok{border:1px solid var(--gold);background:rgba(201,162,39,0.12);color:var(--gold-bright);font-size:12px;}
+.conn-dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--red-bright);margin-right:5px;vertical-align:middle;}
+.conn-dot.on{background:var(--green);}
+
+/* ---------- identity ---------- */
+.identity{
+  display:flex;flex-wrap:wrap;gap:10px;align-items:center;
+  background:var(--felt);border:1px solid var(--line);border-left:3px solid var(--gold-bright);
+  border-radius:6px;padding:10px 14px;margin-bottom:18px;
+}
+.identity label{font-size:12px;color:var(--ivory-dim);letter-spacing:0.5px;}
+.identity input{
+  background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+  border-radius:4px;padding:8px 10px;font-size:14px;font-family:inherit;
+  min-width:120px;flex:1 1 140px;max-width:220px;
+}
+.identity .me-stat{
+  font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ivory-dim);
+  margin-left:auto;text-align:right;line-height:1.5;
+}
+.identity .me-stat b{color:var(--gold-bright);}
+
+/* ---------- stat cards ---------- */
+.summary-strip{
+  display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+  gap:10px;margin-bottom:20px;
+}
+.stat-card{
+  background:var(--felt);border:1px solid var(--line);
+  border-left:3px solid var(--gold);border-radius:4px;padding:10px 12px;
+}
+.stat-card.blue{border-left-color:var(--blue);}
+.stat-card .num{font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--gold-bright);}
+.stat-card.blue .num{color:var(--blue-bright);}
+.stat-card .num.pos{color:var(--green);}
+.stat-card .num.neg{color:var(--red-bright);}
+.stat-card .lbl{font-size:11px;color:var(--ivory-dim);letter-spacing:0.5px;}
+
+/* ---------- tabs ---------- */
+.tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap;}
+.tab-btn{
+  font-family:'Oswald','Noto Sans TC',sans-serif;background:transparent;
+  border:1px solid var(--line);color:var(--ivory-dim);padding:9px 16px;
+  border-radius:20px;cursor:pointer;font-size:14px;letter-spacing:0.5px;
+  transition:all .15s;min-height:40px;
+}
+.tab-btn.active{background:var(--gold);border-color:var(--gold);color:#14110d;font-weight:700;}
+.tab-btn.active.blue{background:var(--blue);border-color:var(--blue);}
+
+/* ---------- market card ---------- */
+.market-card{
+  background:linear-gradient(180deg,var(--felt-light),var(--felt));
+  border:1px solid var(--line);border-radius:8px;padding:16px;
+  margin-bottom:16px;position:relative;overflow:hidden;
+}
+.market-card::before{
+  content:"";position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--blue),transparent 70%);
+}
+.market-card.settled{border-color:var(--gold);}
+.market-card.settled::before{background:linear-gradient(90deg,var(--gold),transparent 70%);}
+.market-card.locked{border-color:var(--red-bright);}
+.market-head{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:4px;}
+.market-head h2{font-family:'Oswald','Noto Sans TC',sans-serif;font-size:18px;margin:0;}
+.market-desc{color:var(--ivory-dim);font-size:12.5px;margin:2px 0 12px;}
+.market-pool-badge{font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--gold-bright);white-space:nowrap;}
+.chip{display:inline-block;font-size:10.5px;letter-spacing:1px;padding:2px 8px;border-radius:10px;margin-left:6px;vertical-align:middle;font-weight:700;}
+.chip.lock{background:rgba(154,51,36,0.3);border:1px solid var(--red-bright);color:var(--red-bright);}
+.chip.done{background:rgba(201,162,39,0.2);border:1px solid var(--gold);color:var(--gold-bright);}
+.chip.cat{background:rgba(122,162,247,0.18);border:1px solid var(--blue);color:var(--blue-bright);}
+.chip.match{background:rgba(201,162,39,0.18);border:1px solid var(--gold);color:var(--gold-bright);}
+.banker-line{
+  font-size:11.5px;color:var(--ivory-dim);line-height:1.6;
+  background:rgba(122,162,247,0.09);border-left:2px solid var(--blue);
+  padding:6px 10px;border-radius:4px;margin:2px 0 10px;
+}
+.banker-line b{color:var(--blue-bright);}
+.winner-banner{
+  background:rgba(201,162,39,0.15);border:1px solid var(--gold);color:var(--gold-bright);
+  padding:8px 12px;border-radius:5px;font-size:13px;margin-bottom:12px;font-weight:700;line-height:1.6;
+}
+.lock-note{
+  background:rgba(154,51,36,0.15);border:1px solid var(--red-bright);color:var(--ivory);
+  padding:7px 12px;border-radius:5px;font-size:12.5px;margin-bottom:12px;
+}
+
+/* ---------- option rows ---------- */
+.option-row{
+  display:grid;grid-template-columns:26px 1fr;align-items:start;gap:10px;
+  padding:9px 0;border-bottom:1px dashed var(--line);
+}
+.option-row:last-of-type{border-bottom:none;}
+.option-row.is-winner{background:rgba(201,162,39,0.07);}
+.pip{font-size:20px;color:var(--gold);opacity:0.8;line-height:1.2;}
+.opt-main{min-width:0;}
+.opt-label-line{display:flex;justify-content:space-between;gap:8px;font-size:14px;margin-bottom:4px;align-items:baseline;}
+.opt-label-line .lbl{font-weight:500;word-break:break-word;}
+.odds-wrap{display:flex;align-items:baseline;gap:6px;white-space:nowrap;}
+.odds{font-family:'JetBrains Mono',monospace;font-weight:700;color:var(--gold-bright);font-size:16px;}
+.odds.dim{color:var(--ivory-dim);font-size:12.5px;}
+.odds.flash{animation:flash .5s ease;}
+@keyframes flash{0%{color:#fff;transform:scale(1.15);}100%{color:var(--gold-bright);transform:scale(1);}}
+.odds-open{font-size:10.5px;color:var(--ivory-dim);font-family:'JetBrains Mono',monospace;}
+.bar-track{background:rgba(0,0,0,0.35);height:6px;border-radius:3px;overflow:hidden;}
+.bar-fill{background:linear-gradient(90deg,var(--red-bright),var(--gold));height:100%;transition:width .3s;}
+.bar-fill.blue{background:linear-gradient(90deg,var(--blue),var(--blue-bright));}
+.pool-amt{font-family:'JetBrains Mono',monospace;font-size:11px;color:var(--ivory-dim);margin-top:3px;}
+.pool-amt .mine{color:var(--gold-bright);}
+
+/* ---------- bet form ---------- */
+.bet-form{display:flex;gap:6px;align-items:center;margin-top:7px;flex-wrap:wrap;}
+.bet-form input.amt-in{
+  background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+  border-radius:4px;padding:9px 10px;font-size:14px;
+  font-family:'JetBrains Mono',monospace;width:92px;
+}
+.bet-form button.bet-go{
+  background:var(--red);color:var(--ivory);border:none;border-radius:4px;
+  padding:9px 16px;font-size:13.5px;cursor:pointer;font-weight:700;
+  font-family:'Oswald','Noto Sans TC',sans-serif;letter-spacing:0.5px;min-height:40px;
+}
+.bet-form button.bet-go:hover{background:var(--red-bright);}
+.bet-form button.bet-go:disabled{opacity:0.4;cursor:not-allowed;}
+.quick{
+  background:transparent;border:1px solid var(--line);color:var(--ivory-dim);
+  border-radius:4px;padding:8px 9px;font-size:12px;cursor:pointer;
+  font-family:'JetBrains Mono',monospace;min-height:38px;
+}
+.quick:hover{border-color:var(--gold);color:var(--gold-bright);}
+.max-note{font-size:10.5px;color:var(--ivory-dim);width:100%;}
+
+/* ---------- tables ---------- */
+.table-scroll{overflow-x:auto;}
+.ledger{width:100%;border-collapse:collapse;margin-top:10px;font-size:12.5px;}
+.ledger th,.ledger td{padding:6px 8px;text-align:left;border-bottom:1px solid var(--line);}
+.ledger th{color:var(--ivory-dim);font-weight:500;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;}
+.ledger td.num,.ledger th.num{text-align:right;font-family:'JetBrains Mono',monospace;}
+.ledger tr.is-me td{background:rgba(201,162,39,0.08);}
+.ledger tfoot td{border-top:2px solid var(--line);border-bottom:none;font-weight:700;}
+.profit-pos{color:var(--green);}
+.profit-neg{color:var(--red-bright);}
+
+/* ---------- banker: controls & risk ---------- */
+.book-controls{
+  display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;
+  background:rgba(122,162,247,0.07);border:1px solid rgba(122,162,247,0.28);
+  border-radius:5px;padding:8px 11px;margin-bottom:12px;font-size:11.5px;
+}
+.book-controls label{display:flex;align-items:center;gap:6px;color:var(--ivory-dim);}
+.book-controls input[type=checkbox]{accent-color:var(--blue);width:15px;height:15px;cursor:pointer;}
+.book-controls input[type=number]{
+  background:#0d0b08;border:1px solid var(--blue);color:var(--blue-bright);
+  border-radius:4px;padding:5px 7px;font-size:12px;width:86px;font-family:'JetBrains Mono',monospace;
+}
+.bc-margin{font-family:'JetBrains Mono',monospace;margin-left:auto;color:var(--green);}
+.bc-margin.neg{color:var(--red-bright);}
+.odds-edit{display:flex;align-items:center;gap:7px;margin-top:6px;flex-wrap:wrap;}
+.odds-edit label{font-size:11px;color:var(--ivory-dim);letter-spacing:0.5px;}
+.odds-edit input{
+  background:#0d0b08;border:1px solid var(--blue);color:var(--blue-bright);
+  border-radius:4px;padding:6px 8px;font-size:13px;width:82px;
+  font-family:'JetBrains Mono',monospace;font-weight:700;
+}
+.odds-note{font-size:10.5px;color:var(--ivory-dim);opacity:0.85;}
+.banker-risk{
+  margin-top:12px;padding:10px 12px;border-radius:5px;
+  background:rgba(122,162,247,0.07);border:1px solid rgba(122,162,247,0.3);
+}
+.banker-risk .br-title{font-size:11.5px;color:var(--blue-bright);letter-spacing:0.5px;font-weight:700;margin-bottom:4px;}
+.banker-risk .br-empty{font-size:12px;color:var(--ivory-dim);}
+.banker-risk .ledger{margin-top:4px;}
+.banker-risk .ledger td{padding:4px 8px;font-size:12px;}
+.banker-risk tr.br-worst td{border-top:1px solid rgba(122,162,247,0.35);border-bottom:none;}
+
+/* ---------- action bars ---------- */
+.settle-bar{
+  display:flex;flex-wrap:wrap;gap:8px;margin-top:14px;padding-top:12px;
+  border-top:1px solid var(--line);align-items:center;
+}
+.settle-bar select{
+  background:#0d0b08;color:var(--ivory);border:1px solid var(--line);
+  border-radius:4px;padding:8px;font-size:12.5px;font-family:inherit;flex:1 1 160px;min-height:38px;
+}
+.settle-bar button{
+  background:transparent;border:1px solid var(--gold);color:var(--gold-bright);
+  border-radius:4px;padding:8px 12px;font-size:12.5px;cursor:pointer;font-weight:700;min-height:38px;
+}
+.settle-bar button:hover{background:rgba(201,162,39,0.15);}
+.settle-bar button.lock-btn{border-color:var(--red-bright);color:var(--red-bright);}
+.settle-bar button.lock-btn:hover{background:rgba(154,51,36,0.18);}
+.settle-bar button.undo-btn{border-color:var(--ivory-dim);color:var(--ivory-dim);}
+.settle-bar button.undo-btn:hover{background:rgba(236,228,211,0.1);color:var(--ivory);}
+.settle-bar button.del-btn{border-color:var(--red-bright);color:var(--red-bright);margin-left:auto;}
+.settle-bar button.del-btn:hover{background:rgba(154,51,36,0.25);}
+
+/* ---------- banker panels ---------- */
+.panel{
+  background:var(--felt);border:1px solid var(--line);border-radius:8px;
+  padding:14px 16px;margin-bottom:16px;
+}
+.panel > h2{
+  font-family:'Oswald','Noto Sans TC',sans-serif;font-size:15px;
+  letter-spacing:0.5px;color:var(--blue-bright);margin:0 0 12px;
+}
+.panel-grid{display:grid;grid-template-columns:1fr;gap:20px;}
+@media(min-width:760px){.panel-grid{grid-template-columns:repeat(auto-fit,minmax(240px,1fr));}}
+.panel-grid h3{font-size:13px;margin:0 0 8px;color:var(--ivory-dim);letter-spacing:0.5px;}
+.form-col{display:flex;flex-direction:column;gap:8px;}
+.form-col input, .form-col select, .form-col textarea{
+  background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+  border-radius:4px;padding:9px;font-size:12.5px;font-family:inherit;
+}
+.form-col textarea{min-height:64px;resize:vertical;}
+.form-col button{
+  background:var(--blue);color:#0d1220;border:none;border-radius:4px;padding:10px;
+  font-weight:700;cursor:pointer;font-family:'Oswald',sans-serif;letter-spacing:0.5px;font-size:13px;
+}
+.form-col button:hover{filter:brightness(1.1);}
+.form-hint{font-size:11px;color:var(--ivory-dim);line-height:1.6;margin:0;}
+.form-hint b{color:var(--blue-bright);}
+.radio-row{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--ivory-dim);}
+.radio-row label{display:flex;align-items:center;gap:5px;cursor:pointer;}
+.radio-row input{accent-color:var(--blue);}
+#playerEditor{display:grid;grid-template-columns:1fr 1fr;gap:6px;max-height:260px;overflow-y:auto;padding-right:4px;}
+#playerEditor input{
+  background:#0d0b08;border:1px solid var(--line);color:var(--ivory);
+  border-radius:4px;padding:7px;font-size:12px;width:100%;
+}
+.danger-btn{
+  background:transparent;border:1px solid var(--red-bright);color:var(--red-bright);
+  border-radius:4px;padding:9px 12px;cursor:pointer;font-size:12.5px;
+}
+.danger-btn:hover{background:rgba(154,51,36,0.2);}
+.gold-btn{border-color:var(--gold);color:var(--gold-bright);}
+.gold-btn:hover{background:rgba(201,162,39,0.15);}
+
+/* ---------- reports ---------- */
+.report-bar{
+  position:relative;background:rgba(122,162,247,0.16);height:100%;
+  border-radius:2px;min-width:2px;
+}
+.bar-cell{width:34%;padding:4px 8px !important;}
+.bar-cell > div{height:14px;border-radius:2px;}
+.seg-btns{display:flex;gap:6px;margin-bottom:8px;}
+.seg-btns button{
+  background:transparent;border:1px solid var(--line);color:var(--ivory-dim);
+  border-radius:14px;padding:5px 12px;font-size:11.5px;cursor:pointer;
+}
+.seg-btns button.active{background:var(--blue);border-color:var(--blue);color:#0d1220;font-weight:700;}
+
+/* ---------- misc ---------- */
+.empty-note{color:var(--ivory-dim);font-size:12.5px;padding:10px 0;line-height:1.7;}
+footer{margin-top:30px;font-size:11px;color:var(--ivory-dim);line-height:1.7;text-align:center;}
+.toast{
+  position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+  background:var(--gold);color:#14110d;padding:10px 18px;border-radius:20px;
+  font-size:13px;font-weight:700;box-shadow:0 4px 16px rgba(0,0,0,0.4);
+  opacity:0;pointer-events:none;transition:opacity .25s, transform .25s;
+  z-index:50;max-width:88vw;text-align:center;
+}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
+
+@media(max-width:560px){
+  body{padding:14px 10px 50px;}
+  h1{font-size:25px;}
+  .option-row{grid-template-columns:20px 1fr;gap:8px;}
+  .pip{font-size:17px;}
+  .bet-form input.amt-in{flex:1 1 84px;width:auto;}
+  .identity .me-stat{margin-left:0;width:100%;text-align:left;}
+  .stat-card .num{font-size:18px;}
+  .bc-margin{margin-left:0;width:100%;}
+  .settle-bar button.del-btn{margin-left:0;}
+  #playerEditor{grid-template-columns:1fr;}
+}
