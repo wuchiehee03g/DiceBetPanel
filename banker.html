@@ -565,6 +565,15 @@ function renderSettingsTab(){
         <p class="form-hint">目前 <b>$${fmt(state.maxBet)}</b>。上限越小，自動調價的波動越平緩。改完按 Enter 或點其他地方生效。</p>
       </div>
       <div class="form-col">
+        <h3>連線診斷</h3>
+        <button type="button" class="danger-btn gold-btn" id="testConnBtn">測試資料庫讀寫</button>
+        <p class="form-hint" id="testConnResult">
+          有人反映「按下注沒反應」時先按這個 —— 它會實際寫一筆測試資料再讀回來刪掉，
+          可以分辨是網路／資料庫問題還是操作問題。左上角的小綠點只代表連線握手成功，
+          不保證寫得進去。
+        </p>
+      </div>
+      <div class="form-col">
         <h3>備份</h3>
         <button type="button" class="danger-btn gold-btn" id="exportBtn">匯出備份（下載 JSON）</button>
         <label class="form-hint">匯入備份（會覆蓋目前所有資料）
@@ -663,6 +672,8 @@ function attachHandlers(){
     }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
   };
 
+  const testConnBtn = document.getElementById('testConnBtn');
+  if(testConnBtn) testConnBtn.onclick = testConnection;
   const exportBtn = document.getElementById('exportBtn');
   if(exportBtn) exportBtn.onclick = doExport;
   const importFile = document.getElementById('importFile');
@@ -833,6 +844,39 @@ async function deleteMarket(marketId){
     await db.ref(DB_PATH).update(updates);
     showToast(related.length ? `盤口與 ${related.length} 筆注單已刪除` : '盤口已刪除');
   }catch(e){ showToast('刪除失敗：' + String(e).slice(0,60)); }
+}
+
+/* 實際寫一筆再讀回來刪掉。左上角的小綠點只代表連線握手成功，
+   不保證寫得進去（例如資料庫規則被改成唯讀就會卡在這裡）。 */
+async function testConnection(){
+  const out = document.getElementById('testConnResult');
+  const say = (msg, cls) => { if(out) out.innerHTML = `<b style="color:var(--${cls})">${msg}</b>`; };
+
+  if(!firebaseReady){
+    say('❌ Firebase 尚未初始化，請檢查 index.html 裡的 firebaseConfig', 'red-bright');
+    showToast('Firebase 尚未初始化');
+    return;
+  }
+  const ref = db.ref(`${DB_PATH}/__connTest__`);
+  const token = 'ping-' + Date.now();
+  const t0 = Date.now();
+  try{
+    say('測試中……', 'ivory-dim');
+    await ref.set(token);
+    const snap = await ref.once('value');
+    const ms = Date.now() - t0;
+    if(snap.exists() && snap.val() === token){
+      await ref.remove().catch(()=>{});
+      say(`✅ 讀寫正常，來回 ${ms} ms。玩家下注應該沒問題，請他重新整理再試一次。`, 'green');
+      showToast(`✅ 讀寫正常（${ms} ms）`);
+    }else{
+      say('❌ 寫進去了但讀不回來 —— 檢查資料庫規則是否開放讀取', 'red-bright');
+      showToast('❌ 寫入後讀不回來');
+    }
+  }catch(e){
+    say(`❌ 失敗：${esc(String(e).slice(0,90))}<br>可能是網路斷線，或資料庫規則不允許寫入。`, 'red-bright');
+    showToast('❌ 連線測試失敗');
+  }
 }
 
 async function doExport(){
