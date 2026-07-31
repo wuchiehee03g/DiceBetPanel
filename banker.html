@@ -1164,23 +1164,34 @@ function doImport(e){
 }
 
 async function doReset(){
-  // 防呆：沒備份過就不讓重置
+  const nMarkets = state.markets.length, nBets = state.bets.length;
+  const named = state.players.filter((p,i)=> p !== `選手${i+1}`).length;
+
+  if(!confirm(
+    `重置整個賽事會刪除：\n\n` +
+    `· ${nMarkets} 個盤口\n` +
+    `· ${nBets} 筆注單\n` +
+    (named ? `· 已改過的 ${named} 位玩家姓名（會變回「選手1~16」）\n` : '') +
+    `· 全域設定（單筆上限、莊家名單）\n\n` +
+    `無法復原。確定要繼續嗎？`
+  )) return;
+
+  if(!confirm('最後確認：所有人的注單都會消失。\n\n按下確定後就會立刻執行。')) return;
+
+  // 動手前一定先備份。不問、直接下載——這是破壞性操作，備份沒有壞處。
   if(!lastExportAt){
-    if(!confirm('你這次開啟後還沒有匯出過備份。\n\n重置會永久刪除所有盤口與注單，強烈建議先按「匯出備份」。\n\n要現在先匯出嗎？（建議按確定）')){
-      // 使用者堅持不備份，繼續走確認流程
-    }else{
+    try{
       await doExport();
-      return;   // 匯出完停下來，讓他確認檔案沒問題再按一次重置
-    }
+      showToast('已自動下載備份，正在重置…');
+    }catch(e){ /* 備份失敗不阻擋重置，使用者已經確認兩次 */ }
   }
-  if(!confirm('這會清空所有盤口與下注紀錄，確定重置整個賽事嗎？')) return;
-  if(!confirm('再確認一次：所有人的注單都會消失，且無法復原。')) return;
+
   try{
     const sd = seed();
     // 逐分支寫入，不要對根節點做整包 set（會被 Firebase 規則擋下）
     await db.ref(DB_PATH).update({
       schema: sd.schema, maxBet: sd.maxBet, players: sd.players,
-      markets: null, bets: null
+      markets: null, bets: null, bankers: null
     });
     showToast('賽事已重置');
   }catch(e){ showToast('重置失敗：' + String(e).slice(0,60)); }
