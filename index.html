@@ -199,6 +199,23 @@
     font-family:'JetBrains Mono',monospace;font-weight:700;
   }
   .odds-note{font-size:10.5px;color:var(--ivory-dim);opacity:0.8;}
+  .odds-wrap{display:flex;align-items:baseline;gap:6px;white-space:nowrap;}
+  .odds-open{font-size:10.5px;color:var(--ivory-dim);font-family:'JetBrains Mono',monospace;}
+  .book-controls{
+    display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;
+    background:rgba(122,162,247,0.07);border:1px solid rgba(122,162,247,0.28);
+    border-radius:5px;padding:8px 11px;margin-bottom:12px;font-size:11.5px;
+  }
+  .book-controls label{display:flex;align-items:center;gap:6px;color:var(--ivory-dim);}
+  .book-controls input[type=checkbox]{accent-color:#7aa2f7;width:15px;height:15px;cursor:pointer;}
+  .book-controls input[type=number]{
+    background:#0d0b08;border:1px solid #7aa2f7;color:#a9c1ff;
+    border-radius:4px;padding:5px 7px;font-size:12px;width:82px;
+    font-family:'JetBrains Mono',monospace;
+  }
+  .bc-margin{color:var(--green);font-family:'JetBrains Mono',monospace;margin-left:auto;}
+  .bc-margin.neg{color:var(--red-bright);}
+  @media(max-width:560px){ .bc-margin{margin-left:0;width:100%;} }
   .banker-risk{
     margin-top:12px;padding:10px 12px;border-radius:5px;
     background:rgba(122,162,247,0.07);border:1px solid rgba(122,162,247,0.3);
@@ -436,6 +453,8 @@
         <form id="addRosterForm">
           <input id="newRosterTitle" placeholder="盤口名稱，例如：總冠軍 · 八強前" required maxlength="80">
           <input id="newRosterBanker" placeholder="莊家名字（留空＝彩池盤，大家互賭）" maxlength="20">
+          <input id="newRosterPriorK" type="number" min="100" step="100" value="5000"
+                 placeholder="定價黏性（莊家盤才用到）">
           <button type="submit">用 16 人名單開新盤</button>
         </form>
         <p class="admin-hint">
@@ -452,11 +471,15 @@
           <input id="newQTitle" placeholder="題目，例如：決賽是否有人喊哉？" required maxlength="80">
           <input id="newQOptions" placeholder="選項，用逗號分隔，例如：有,沒有" required maxlength="200">
           <input id="newQBanker" placeholder="莊家名字（留空＝彩池盤，大家互賭）" maxlength="20">
+          <input id="newQPriorK" type="number" min="100" step="100" value="2000"
+                 placeholder="定價黏性（莊家盤才用到）">
           <button type="submit">新增盤口</button>
         </form>
         <p class="admin-hint">
-          填了莊家名字就是<b>莊家盤</b>：賠率由莊家逐一開價、不需要對手池、不抽水，
-          賠付風險由莊家承擔。留空則是<b>彩池盤</b>，大家互賭、莊家只抽水。
+          填了莊家名字就是<b>莊家盤</b>：不需要對手池、不抽水，賠付風險由莊家承擔，
+          且<b>賠率會依下注額自動調整</b>（開盤後可逐盤關掉改回手動）。
+          留空則是<b>彩池盤</b>，大家互賭、莊家只抽水。<br>
+          定價黏性＝相當於莊家自己先押多少錢在他開的價上，數字越小價格被推動得越快。
         </p>
         <button class="danger-btn" id="resetAllBtn" style="margin-top:16px;">重置整個賽事（清空所有下注與盤口）</button>
       </div>
@@ -503,7 +526,9 @@ const ID_KEY    = 'dbp-bettor-id';
 const TAB_KEY   = 'dbp-tab';
 const PLAYER_COUNT = 16;
 const QUICK_AMOUNTS = [100, 500, 1000];
-const DEFAULT_ODDS = 2;      // 莊家盤新選項的預設賠率（1:1 平賭）
+const DEFAULT_ODDS = 2;         // 莊家盤新選項的預設賠率（1:1 平賭）
+const DEFAULT_PRIOR_K = 2000;   // 自動定價的預設黏性：相當於莊家先押多少錢在自己開的價上
+const MAX_AUTO_ODDS = 50;       // 自動定價的上限，避免冷門選項出現荒謬賠率
 
 /* ------------------------------------------------------------
    資料模型
@@ -606,6 +631,8 @@ function normalize(raw){
       // 舊資料沒有 mode 欄位，一律視為彩池盤（向後相容）
       mode: (m.mode === 'book' && banker) ? 'book' : 'pool',
       banker,
+      autoPrice: m.autoPrice !== false,   // 莊家盤預設開啟自動調價
+      priorK: (typeof m.priorK === 'number' && m.priorK > 0) ? m.priorK : DEFAULT_PRIOR_K,
       order: typeof m.order === 'number' ? m.order : 0,
       locked: !!m.locked,
       settled: !!m.settled,
@@ -646,12 +673,47 @@ function betOdds(bet){
   return (typeof bet.oddsAtBet === 'number' && bet.oddsAtBet > 1) ? bet.oddsAtBet : DEFAULT_ODDS;
 }
 
+// 莊家開的那組初始賠率隱含的總機率（overround）。
+// 大於 1 代表莊家有理論利潤空間，小於 1 代表他把價開得太甜、長期不利。
+function bookOverround(market){
+  const sum = market.options.reduce((s,o)=> s + 1/o.odds, 0);
+  return sum > 0 ? sum : 1;
+}
+function bookMargin(market){ return bookOverround(market) - 1; }
+
+/* 自動定價 ------------------------------------------------------------
+   把莊家開的初始賠率當成「先驗」，換算成虛擬注額 K×q，再和真實注額相加
+   重算價格。錢押去哪邊，那邊的賠率就降、另一邊就升。
+
+     q_i     = (1/初始賠率_i) / O          先驗機率
+     賠率_i  = (K + S) / (O × (K×q_i + s_i))
+
+   兩個性質：
+   · 還沒有人下注時 (S=0)，算出來剛好等於莊家開的初始賠率
+   · Σ(1/賠率_i) 恆等於 O，也就是不管錢怎麼流動，莊家的理論利潤率不變
+   K 就是「定價黏性」：相當於莊家自己先押了多少錢在他開的價上。
+   -------------------------------------------------------------------- */
+function autoOdds(market, optId){
+  const opt = market.options.find(o=>o.id === optId);
+  if(!opt) return DEFAULT_ODDS;
+  const O = bookOverround(market);
+  const K = market.priorK;
+  const S = marketTotal(market);
+  const v = K * ((1/opt.odds) / O);
+  const s = poolOf(market.id, optId);
+  const raw = (K + S) / (O * (v + s));
+  return Math.min(MAX_AUTO_ODDS, Math.max(1.01, Math.round(raw * 100) / 100));
+}
+
 // 未結算時顯示的即時賠率
 function liveOdds(market, optId){
   if(market.mode === 'book'){
-    // 莊家盤：賠率由莊家開，不隨池額浮動，也不需要對手池
+    // 莊家盤：賠率由莊家掌控，不需要對手池
     const opt = market.options.find(o=>o.id === optId);
-    return { kind:'odds', value: opt ? opt.odds : DEFAULT_ODDS, fixed:true };
+    const opening = opt ? opt.odds : DEFAULT_ODDS;
+    return market.autoPrice
+      ? { kind:'odds', value: autoOdds(market, optId), fixed:true, auto:true,  opening }
+      : { kind:'odds', value: opening,                 fixed:true, auto:false, opening };
   }
   const total = marketTotal(market);
   const pool  = poolOf(market.id, optId);
@@ -804,6 +866,7 @@ function captureFocus(){
   if(!el || !el.dataset) return null;
   if(el.dataset.betAmt !== undefined) return { sel:`[data-bet-amt="${el.dataset.betAmt}"]`, s:el.selectionStart, e:el.selectionEnd };
   if(el.dataset.oddsIn !== undefined) return { sel:`[data-odds-in="${el.dataset.oddsIn}"]`, s:el.selectionStart, e:el.selectionEnd };
+  if(el.dataset.priorK !== undefined) return { sel:`[data-prior-k="${el.dataset.priorK}"]`, s:el.selectionStart, e:el.selectionEnd };
   if(el.dataset.pidx   !== undefined) return { sel:`[data-pidx="${el.dataset.pidx}"]`,     s:el.selectionStart, e:el.selectionEnd };
   return null;
 }
@@ -911,8 +974,12 @@ function renderMarketCard(market){
 
     let oddsHtml;
     if(market.mode === 'book'){
-      // 莊家盤：顯示莊家開的固定賠率（就是掛牌價，結算後也照這個顯示）
-      oddsHtml = `<span class="odds" data-odds-for="${market.id}:${opt.id}">${opt.odds.toFixed(2)}x</span>`;
+      const lo = liveOdds(market, opt.id);
+      const moved = lo.auto && Math.abs(lo.value - lo.opening) >= 0.01;
+      oddsHtml = `<span class="odds-wrap">`
+        + `<span class="odds" data-odds-for="${market.id}:${opt.id}">${lo.value.toFixed(2)}x</span>`
+        + (moved ? `<span class="odds-open">開 ${lo.opening.toFixed(2)}</span>` : '')
+        + `</span>`;
     }else if(market.settled){
       if(info.mode === 'refund')      oddsHtml = `<span class="odds refund">全額退款</span>`;
       else if(isWinner)               oddsHtml = `<span class="odds">${info.odds.toFixed(2)}x</span>`;
@@ -945,10 +1012,12 @@ function renderMarketCard(market){
           <div class="pool-amt">${market.mode==='book'?'注金':'池'}：$${fmt(pool)}${(market.mode!=='book'&&total>0)?`（${(pool/total*100).toFixed(1)}%）`:''}${myAmt>0?` · <span class="mine">我押 $${fmt(myAmt)}</span>`:''}</div>
           ${(market.mode==='book' && !market.settled) ? `
           <div class="odds-edit">
-            <label>莊家賠率</label>
+            <label>${market.autoPrice ? '初始定價' : '莊家賠率'}</label>
             <input type="number" min="1.01" step="0.05" inputmode="decimal"
                    data-odds-in="${key}" value="${opt.odds.toFixed(2)}">
-            <span class="odds-note">改了只影響之後的新注單</span>
+            <span class="odds-note">${market.autoPrice
+              ? '目前掛牌價由此價與下注額自動推導'
+              : '改了只影響之後的新注單'}</span>
           </div>` : ''}
           ${betForm}
         </div>
@@ -1002,7 +1071,8 @@ function renderMarketCard(market){
         <h2>${esc(market.title)}${market.mode==='book'?'<span class="chip book">莊家盤</span>':''}${market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
         <div class="market-pool-badge">${market.mode==='book'?'總注金':'總池'} $${fmt(total)}</div>
       </div>
-      ${market.mode==='book'?`<div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　賠率由莊家開，不需要對手池，賠付風險由莊家承擔，不抽水</div>`:''}
+      ${market.mode==='book'?`<div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　不需要對手池，賠付風險由莊家承擔，不抽水</div>`:''}
+      ${(market.mode==='book' && !market.settled) ? renderBookControls(market) : ''}
       ${market.desc?`<div class="market-desc">${esc(market.desc)}</div>`:''}
       ${banner}
       ${rows}
@@ -1010,6 +1080,26 @@ function renderMarketCard(market){
       ${settleControls}
       ${market.settled ? renderLedger(market, info) : ''}
     </div>`;
+}
+
+/* ---------- 莊家盤的定價控制 ---------- */
+function renderBookControls(market){
+  const margin = bookMargin(market) * 100;
+  return `<div class="book-controls">
+    <label class="bc-toggle">
+      <input type="checkbox" data-auto-toggle="${market.id}" ${market.autoPrice?'checked':''}>
+      自動依下注額調價
+    </label>
+    ${market.autoPrice ? `
+      <label class="bc-k">定價黏性
+        <input type="number" min="100" step="100" inputmode="numeric"
+               data-prior-k="${market.id}" value="${market.priorK}">
+      </label>
+      <span class="odds-note">數字越小，價格被推動得越快</span>` : ''}
+    <span class="bc-margin ${margin>=0?'':'neg'}">
+      初始定價的莊家利潤率 ${margin>=0?'+':''}${margin.toFixed(1)}%${margin<0?'　⚠ 負值，長期對莊家不利':''}
+    </span>
+  </div>`;
 }
 
 /* ---------- 莊家風險面板 ----------
@@ -1168,6 +1258,24 @@ function attachMarketHandlers(markets){
   document.querySelectorAll('[data-del-btn]').forEach(btn=>{
     btn.onclick = ()=> deleteMarket(btn.dataset.delBtn);
   });
+  document.querySelectorAll('[data-auto-toggle]').forEach(cb=>{
+    cb.onchange = async ()=>{
+      try{
+        await db.ref(`${DB_PATH}/markets/${cb.dataset.autoToggle}/autoPrice`).set(cb.checked);
+        showToast(cb.checked ? '已開啟自動調價' : '已改為手動定價');
+      }catch(e){ showToast('切換失敗：' + String(e).slice(0,60)); }
+    };
+  });
+  document.querySelectorAll('[data-prior-k]').forEach(inp=>{
+    inp.onchange = async ()=>{
+      const v = Math.round(parseFloat(inp.value));
+      if(!(v > 0)){ showToast('定價黏性必須是正數'); render(); return; }
+      try{
+        await db.ref(`${DB_PATH}/markets/${inp.dataset.priorK}/priorK`).set(v);
+        showToast(`定價黏性已設為 ${fmt(v)}`);
+      }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+    };
+  });
   document.querySelectorAll('[data-odds-in]').forEach(inp=>{
     inp.onchange = async ()=>{
       const [mid, oid] = inp.dataset.oddsIn.split(':');
@@ -1215,9 +1323,16 @@ async function placeBet(marketId, optionId){
 
     const payload = { marketId, optionId, name, bettorId: me.id, amount, ts: Date.now() };
     if(isBook){
-      // 讀伺服器端當下的賠率並鎖進這筆注單，莊家事後改價不影響已成立的注
-      const o = m.options && m.options[optionId];
-      payload.oddsAtBet = (o && typeof o.odds === 'number' && o.odds > 1) ? o.odds : DEFAULT_ODDS;
+      const localMarket = state.markets.find(x=>x.id === marketId);
+      if(m.autoPrice !== false && localMarket){
+        // 自動定價：用推導值。本地資料是即時同步的，所以這個數字就是玩家
+        // 畫面上看到的那個，不會出現「看到 3.0 卻成交在 1.1」的落差。
+        payload.oddsAtBet = autoOdds(localMarket, optionId);
+      }else{
+        // 手動定價：讀伺服器端當下的掛牌價，莊家事後改價不影響已成立的注
+        const o = m.options && m.options[optionId];
+        payload.oddsAtBet = (o && typeof o.odds === 'number' && o.odds > 1) ? o.odds : DEFAULT_ODDS;
+      }
     }
     await db.ref(`${DB_PATH}/bets`).push(payload);
 
@@ -1459,6 +1574,8 @@ document.getElementById('addRosterForm').addEventListener('submit', async (e)=>{
       group:'main',
       mode: banker ? 'book' : 'pool',
       banker: banker || null,
+      autoPrice: true,
+      priorK: Math.max(100, Math.round(parseFloat(document.getElementById('newRosterPriorK').value) || DEFAULT_PRIOR_K)),
       order: Date.now(),          // champion 的 order 是 0，新階段盤排在後面
       locked:false, settled:false, winnerId:null,
       options
@@ -1491,6 +1608,8 @@ document.getElementById('addMarketForm').addEventListener('submit', async (e)=>{
       group:'prop',
       mode: banker ? 'book' : 'pool',
       banker: banker || null,
+      autoPrice: true,
+      priorK: Math.max(100, Math.round(parseFloat(document.getElementById('newQPriorK').value) || DEFAULT_PRIOR_K)),
       order: Date.now(),
       locked:false, settled:false, winnerId:null,
       options
