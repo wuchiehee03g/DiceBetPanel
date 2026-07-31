@@ -257,7 +257,12 @@ function renderMarketCard(market){
           market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
         <div class="market-pool-badge">總注金 $${fmt(total)}</div>
       </div>
-      <div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　單筆上限 $${fmt(effectiveMaxBet(state, market))}　·　下注當下即鎖定賠率</div>
+      <div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　單筆上限 $${fmt(effectiveMaxBet(state, market))}${
+        market.maxPerBettor ? (()=>{
+          const used = bettorStakeOn(state, market.id, me.id, me.name);
+          const room = market.maxPerBettor - used;
+          return `　·　每人上限 $${fmt(market.maxPerBettor)}<b>（你還可押 $${fmt(Math.max(0, room))}）</b>`;
+        })() : ''}　·　下注當下即鎖定賠率</div>
       ${market.desc?`<div class="market-desc">${esc(market.desc)}</div>`:''}
       ${banner}
       ${rows}
@@ -394,6 +399,10 @@ async function placeBet(marketId, optionId){
 
     const recheck = validateBetAmount(inp.value, effectiveMaxBet(fresh, freshMarket));
     if(!recheck.ok){ showToast(recheck.reason); return; }
+
+    // 每人在這盤的總額上限
+    const per = checkPerBettor(fresh, freshMarket, me.id, name, recheck.amount);
+    if(!per.ok){ showToast(per.reason); return; }
 
     const oddsAtBet = liveOdds(freshPools, freshMarket, optionId).value;
 

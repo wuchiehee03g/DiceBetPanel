@@ -215,6 +215,8 @@ function normalize(raw){
       maxBet: (typeof m.maxBet === 'number' && m.maxBet > 0) ? m.maxBet : null,
       // 單一選項的莊家賠付上限；null 表示不限制
       maxLiability: (typeof m.maxLiability === 'number' && m.maxLiability > 0) ? m.maxLiability : null,
+      // 每人在這盤的下注總額上限；null 表示不限制
+      maxPerBettor: (typeof m.maxPerBettor === 'number' && m.maxPerBettor > 0) ? m.maxPerBettor : null,
       order: typeof m.order === 'number' ? m.order : 0,
       locked: !!m.locked,
       settled: !!m.settled,
@@ -434,6 +436,38 @@ function checkLiability(state, pools, market, optId, amount, oddsAtBet){
   return { ok:true };
 }
 
+/* 每人限額 ----------------------------------------------------------
+   身分同時比對 bettorId（裝置）與暱稱，任一相符就算同一個人——
+   換裝置但用同名字、或同裝置改名字，兩種繞法都會被算進去。
+
+   這是「防止一個人把額度吃光」的軟性限制，不是嚴格的身分驗證：
+   資料庫是開放的，真要繞還是繞得過（換裝置又改名字）。跟整個專案的
+   信任制假設一致。
+   ------------------------------------------------------------------ */
+function bettorStakeOn(state, marketId, bettorId, name){
+  const nm = String(name || '').trim();
+  return state.bets
+    .filter(b => b.marketId === marketId &&
+                 (b.bettorId === bettorId || (nm && String(b.name || '').trim() === nm)))
+    .reduce((s,b)=> s + b.amount, 0);
+}
+
+function checkPerBettor(state, market, bettorId, name, amount){
+  if(!market.maxPerBettor) return { ok:true };
+  const already = bettorStakeOn(state, market.id, bettorId, name);
+  const room = market.maxPerBettor - already;
+  if(amount > room){
+    return {
+      ok: false,
+      reason: room > 0
+        ? `這盤每人上限 $${fmt(market.maxPerBettor)}，你已下 $${fmt(already)}，最多還能押 $${fmt(room)}`
+        : `這盤每人上限 $${fmt(market.maxPerBettor)}，你已經押滿了`,
+      room
+    };
+  }
+  return { ok:true };
+}
+
 // 盤口整體的曝險使用率（給後台顯示進度用）
 function liabilityUsage(state, pools, market){
   if(!market.maxLiability) return null;
@@ -531,6 +565,7 @@ if(typeof module !== 'undefined' && module.exports){
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
+    bettorStakeOn, checkPerBettor,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };
 }

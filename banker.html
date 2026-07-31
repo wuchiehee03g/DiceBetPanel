@@ -100,7 +100,7 @@ function boot(){
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
                     'binA','binB','matchA','matchB','matchBanker','matchPriorK',
-                    'marketMax','marketLiab'];
+                    'marketMax','marketPer','marketLiab'];
 function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
@@ -394,10 +394,13 @@ function renderMarketCard(market){
       <label>本盤單筆上限
         <input type="number" min="0" step="500" inputmode="numeric" placeholder="沿用全域"
                data-market-max="${market.id}" value="${market.maxBet || ''}"></label>
+      <label>每人上限
+        <input type="number" min="0" step="500" inputmode="numeric" placeholder="不限制"
+               data-market-per="${market.id}" value="${market.maxPerBettor || ''}"></label>
       <label>單選項曝險上限
         <input type="number" min="0" step="5000" inputmode="numeric" placeholder="不限制"
                data-market-liab="${market.id}" value="${market.maxLiability || ''}"></label>
-      <span class="odds-note">留空＝沿用全域／不限制。曝險上限會擋下讓莊家超額的注，但只擋那一個選項。</span>
+      <span class="odds-note">留空＝沿用全域／不限制。曝險上限只擋爆掉的那個選項；每人上限比對裝置與暱稱，是軟性限制。</span>
     </div>`;
 
   const actions = `
@@ -667,20 +670,21 @@ function attachHandlers(){
       }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
     };
   });
-  const numField = (attr, field, label) => {
+  const numField = (attr, dataKey, dbField, label) => {
     document.querySelectorAll(`[data-${attr}]`).forEach(inp=>{
       inp.onchange = async ()=>{
         const v = inp.value.trim() === '' ? null : Math.round(parseFloat(inp.value));
         if(v !== null && !(v > 0)){ showToast(`${label}必須是正數，或留空`); render(); return; }
         try{
-          await db.ref(`${DB_PATH}/markets/${inp.dataset[field]}/${attr === 'market-max' ? 'maxBet' : 'maxLiability'}`).set(v);
+          await db.ref(`${DB_PATH}/markets/${inp.dataset[dataKey]}/${dbField}`).set(v);
           showToast(v === null ? `${label}已清除` : `${label}設為 $${fmt(v)}`);
         }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
       };
     });
   };
-  numField('market-max',  'marketMax',  '本盤單筆上限');
-  numField('market-liab', 'marketLiab', '單選項曝險上限');
+  numField('market-max',  'marketMax',  'maxBet',       '本盤單筆上限');
+  numField('market-per',  'marketPer',  'maxPerBettor', '每人上限');
+  numField('market-liab', 'marketLiab', 'maxLiability', '單選項曝險上限');
 
   document.querySelectorAll('[data-lock-btn]').forEach(b=> b.onclick = ()=> toggleLock(b.dataset.lockBtn));
   document.querySelectorAll('[data-settle-btn]').forEach(b=> b.onclick = ()=> settleMarket(b.dataset.settleBtn));
