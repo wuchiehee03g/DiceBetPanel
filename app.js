@@ -230,16 +230,33 @@ function autoOdds(pools, market, optId){
   return Math.min(MAX_AUTO_ODDS, Math.max(MIN_AUTO_ODDS, Math.round(raw * 100) / 100));
 }
 
-/* 一筆滿額注會把 2.00 的賠率推到哪裡 —— 讓莊家對「定價黏性」有體感。
-   以最單純的兩選項、雙方都開 2.00（overround = 1）來估。 */
-function maxBetImpact(priorK, maxBet){
+/* 一筆滿額注會把賠率推到哪裡 —— 讓莊家對「定價黏性」有體感。
+   以 n 個等價選項來估（overround = 1，所以每個選項的起始賠率就是 n）。
+
+   選項數很重要：先驗權重是 K/n，16 人盤每個選項分到的權重只有兩選項盤的 1/8，
+   同樣的黏性下價格會敏感得多。只用兩選項估會嚴重低估 16 人盤的波動。 */
+function maxBetImpact(priorK, maxBet, optionCount){
   const K = Number(priorK), S = Number(maxBet);
+  const n = (Number(optionCount) >= 2) ? Math.floor(Number(optionCount)) : 2;
   if(!(K > 0) || !(S > 0)) return null;
-  const after = (K + S) / (K * 0.5 + S);
+  const before = n;
+  const after = (K + S) / (K / n + S);
   return {
+    optionCount: n,
+    before,
     after: Math.round(after * 100) / 100,
-    dropPct: Math.round((1 - after / 2) * 1000) / 10   // 相對 2.00 掉了幾 %
+    dropPct: Math.round((1 - after / before) * 1000) / 10
   };
+}
+
+// 想讓一筆滿額注的移動不超過 targetDrop（例如 0.2 ＝ 20%）時，黏性至少要多少
+function suggestPriorK(maxBet, optionCount, targetDrop){
+  const S = Number(maxBet);
+  const n = (Number(optionCount) >= 2) ? Math.floor(Number(optionCount)) : 2;
+  const d = (Number(targetDrop) > 0 && Number(targetDrop) < 1) ? Number(targetDrop) : 0.2;
+  // 解 (K+S)/(K/n+S) = n(1-d)  →  K(1 - (1-d)) = S(n(1-d) - 1)
+  const K = S * (n * (1 - d) - 1) / d;
+  return K > 0 ? Math.ceil(K / 1000) * 1000 : null;
 }
 
 // 目前掛牌價
@@ -387,7 +404,7 @@ if(typeof module !== 'undefined' && module.exports){
     MAX_HP, DEFAULT_BIG_MIN, bigSmallDesc, oddEvenDesc, buildMatchMarkets, matchSortKey,
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,
-    bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact,
+    bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
     bankerNetIfWins, worstCase, settleInfo, betOutcome, validateBetAmount,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };

@@ -176,14 +176,27 @@ function renderMarketsTab(){
       : state.markets.map(renderMarketCard).join(''));
 }
 
-// 把「定價黏性」翻譯成看得懂的體感：一筆滿額注會把 2.00 推到哪
-function impactHint(priorK){
-  const im = maxBetImpact(priorK, state.maxBet);
+// 把「定價黏性」翻譯成看得懂的體感：一筆滿額注會把賠率推動多少。
+// 選項數會大幅影響結果，所以一定要帶入實際的選項數。
+function impactHint(priorK, optionCount){
+  const n = optionCount || 2;
+  const im = maxBetImpact(priorK, state.maxBet, n);
   if(!im) return '定價黏性＝相當於莊家先押多少錢在自己開的價上。';
   const warn = im.dropPct >= 25;
+  const suggest = warn ? suggestPriorK(state.maxBet, n, 0.2) : null;
   return `定價黏性＝相當於莊家先押多少錢在自己開的價上。<br>`
-    + `以目前上限 $${fmt(state.maxBet)} 計算，<b>一筆滿額注會把 2.00 的賠率推到 ${im.after.toFixed(2)}</b>`
-    + `（移動 ${im.dropPct}%）${warn ? '　⚠ 波動偏大，建議把黏性調高' : ''}`;
+    + `以 <b>${n} 個等價選項</b>、上限 $${fmt(state.maxBet)} 計算，`
+    + `一筆滿額注會把 <b>${im.before.toFixed(2)} 推到 ${im.after.toFixed(2)}</b>（移動 ${im.dropPct}%）`
+    + (warn ? `　⚠ 波動偏大，想壓到 20% 以內建議黏性設 <b>${fmt(suggest)}</b> 以上` : '');
+}
+
+// 開盤表單目前會產生幾個選項
+function pendingOptionCount(){
+  if(newCategory === 'multi')  return PLAYER_COUNT;
+  if(newCategory === 'binary') return 2;
+  const el = document.getElementById('newOptions');
+  const n = el ? el.value.split(/[,，]/).map(s=>s.trim()).filter(Boolean).length : 0;
+  return n >= 2 ? n : 2;
 }
 
 function renderMatchPanel(){
@@ -208,7 +221,7 @@ function renderMatchPanel(){
         <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
                value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
         <select id="matchBigMin">${bigOpts.join('')}</select>
-        <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K)}</p>
+        <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K, 2)}</p>
       </div>
       <div class="form-col">
         <h3>會建立這三個盤</h3>
@@ -243,7 +256,7 @@ function renderCreatePanel(){
         <input data-new-banker="1" id="newBanker" placeholder="莊家名字（必填）" maxlength="20">
         <input data-new-prior-k="1" id="newPriorK" type="number" min="100" step="1000"
                value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
-        <p class="form-hint" id="createImpact">${impactHint(DEFAULT_PRIOR_K)}</p>
+        <p class="form-hint" id="createImpact">${impactHint(DEFAULT_PRIOR_K, pendingOptionCount())}</p>
       </div>
       <div class="form-col">
         <h3>3. 選項</h3>
@@ -343,8 +356,11 @@ function renderMarketCard(market){
       <label><input type="checkbox" data-auto-toggle="${market.id}" ${market.autoPrice?'checked':''}> 自動依下注額調價</label>
       ${market.autoPrice ? `<label>定價黏性
         <input type="number" min="100" step="1000" inputmode="numeric" data-prior-k="${market.id}" value="${market.priorK}"></label>
-        ${(()=>{ const im = maxBetImpact(market.priorK, state.maxBet);
-                 return im ? `<span class="odds-note">滿額注移動 ${im.dropPct}%</span>` : ''; })()}` : ''}
+        ${(()=>{ const im = maxBetImpact(market.priorK, state.maxBet, market.options.length);
+                 if(!im) return '';
+                 const w = im.dropPct >= 25;
+                 return `<span class="odds-note"${w?' style="color:var(--red-bright)"':''}>滿額注移動 ${im.dropPct}%${
+                   w ? `（建議黏性 ${fmt(suggestPriorK(state.maxBet, market.options.length, 0.2))} 以上）` : ''}</span>`; })()}` : ''}
       <span class="bc-margin ${margin>=0?'':'neg'}">初始定價利潤率 ${margin>=0?'+':''}${margin.toFixed(1)}%${margin<0?'　⚠ 負值，長期不利':''}</span>
     </div>`;
 
@@ -549,11 +565,16 @@ function attachHandlers(){
   const matchBtn = document.getElementById('matchBtn');
   if(matchBtn) matchBtn.onclick = createMatch;
 
-  // 調整黏性時即時更新體感提示
-  [['matchPriorK','matchImpact'], ['newPriorK','createImpact']].forEach(([inId, outId])=>{
-    const inp = document.getElementById(inId), out = document.getElementById(outId);
-    if(inp && out) inp.oninput = ()=>{ out.innerHTML = impactHint(parseFloat(inp.value)); };
-  });
+  // 調整黏性（或選項數）時即時更新體感提示
+  const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
+  if(mk && mi) mk.oninput = ()=>{ mi.innerHTML = impactHint(parseFloat(mk.value), 2); };
+  const nk = document.getElementById('newPriorK'), ni = document.getElementById('createImpact');
+  const refreshCreateImpact = ()=>{
+    if(ni) ni.innerHTML = impactHint(parseFloat(nk ? nk.value : DEFAULT_PRIOR_K), pendingOptionCount());
+  };
+  if(nk && ni) nk.oninput = refreshCreateImpact;
+  const optIn = document.getElementById('newOptions');
+  if(optIn) optIn.oninput = refreshCreateImpact;
 
   const seriesBtn = document.getElementById('seriesBtn');
   if(seriesBtn) seriesBtn.onclick = settleSeries;
