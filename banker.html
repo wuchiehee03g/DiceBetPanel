@@ -78,7 +78,8 @@ function setStorageWarning(broken){
 }
 
 function boot(){
-  activeTab = localStorage.getItem(TAB_KEY) || 'markets';
+  const savedTab = localStorage.getItem(TAB_KEY);
+  activeTab = ['markets','reports','settings','guide'].includes(savedTab) ? savedTab : 'markets';
   if(!firebaseReady){
     setStorageWarning(true);
     state = normalize(seed()); pools = buildPools(state); render();

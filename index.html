@@ -90,7 +90,10 @@ function boot(){
     const v = uid(); try{ localStorage.setItem(ID_KEY, v); }catch(e){} return v;
   })();
   me.name = localStorage.getItem(NAME_KEY) || '';
-  activeTab = localStorage.getItem(TAB_KEY) || 'multi';
+  // 舊版用同一個 key 存過 'main'/'prop'，直接沿用會比對不到任何盤口、
+  // 畫面一片空白且沒有分頁反白。所以存進來的值一定要驗證。
+  const savedTab = localStorage.getItem(TAB_KEY);
+  activeTab = (CATEGORY_KEYS.includes(savedTab) || savedTab === 'mine') ? savedTab : 'multi';
   document.getElementById('meName').value = me.name;
 
   if(!firebaseReady){
