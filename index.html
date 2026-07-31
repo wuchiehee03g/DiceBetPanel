@@ -146,6 +146,12 @@ function renderIdentity(){
     if(o.status === 'pending') pending += b.amount; else settledProfit += o.profit;
   });
   const el = document.getElementById('meStat');
+  const banned = isBannedBettor(state, null, me.name);
+  if(banned){
+    el.innerHTML = `<span style="color:var(--red-bright);font-weight:700">🚫 ${esc(banned.reason)}</span>`
+      + (mine.length ? `<br>過去的 ${mine.length} 筆注單仍然有效` : '');
+    return;
+  }
   if(mine.length === 0){
     el.innerHTML = me.name ? '還沒有下注紀錄' : '先輸入暱稱才能下注';
     return;
@@ -388,14 +394,12 @@ async function placeBet(marketId, optionId){
     if(m.settled) { showToast('此盤已結算，無法下注'); return; }
     if(m.locked)  { showToast('此盤已封盤，無法下注'); return; }
 
-    if(String(m.banker || '').trim() === name){
-      showToast('你是這盤的莊家，不能在自己的盤上下注');
-      return;
-    }
-
     const fresh = normalize(raw);
     const freshPools = buildPools(fresh);
     const freshMarket = fresh.markets.find(x=>x.id === marketId);
+
+    const banned = isBannedBettor(fresh, freshMarket, name);
+    if(banned){ showToast(banned.reason); return; }
 
     const recheck = validateBetAmount(inp.value, effectiveMaxBet(fresh, freshMarket));
     if(!recheck.ok){ showToast(recheck.reason); return; }

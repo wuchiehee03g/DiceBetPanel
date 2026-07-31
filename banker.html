@@ -109,7 +109,7 @@ function boot(){
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
                     'binA','binB','matchA','matchB','matchBanker','matchPriorK','matchLiab',
-                    'marketMax','marketPer','marketLiab'];
+                    'marketMax','marketPer','marketLiab','bankers'];
 function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
@@ -192,9 +192,10 @@ function render(){
   renderSummary();
   renderTabs();
   const main = document.getElementById('main');
-  if(activeTab === 'markets')      main.innerHTML = renderMarketsTab();
-  else if(activeTab === 'reports') main.innerHTML = renderReportsTab();
-  else                             main.innerHTML = renderSettingsTab();
+  if(activeTab === 'markets')       main.innerHTML = renderMarketsTab();
+  else if(activeTab === 'reports')  main.innerHTML = renderReportsTab();
+  else if(activeTab === 'guide')    main.innerHTML = renderGuideTab();
+  else                              main.innerHTML = renderSettingsTab();
   attachHandlers();
   restoreFocus(f);
 }
@@ -219,6 +220,7 @@ function renderTabs(){
     { key:'markets', label:`盤口管理 (${state.markets.length})` },
     { key:'reports', label:'資料報表' },
     { key:'settings', label:'設定與備份' },
+    { key:'guide', label:'莊家須知' },
   ];
   const tabs = document.getElementById('tabs');
   tabs.innerHTML = groups.map(g=>
@@ -298,7 +300,7 @@ function renderMatchPanel(){
         <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
                value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
         <input data-match-liab="1" id="matchLiab" type="number" min="0" step="1000"
-               value="${MATCH_MAX_LIABILITY}" placeholder="單選項曝險上限">
+               value="" placeholder="單選項曝險上限（留空＝不限制）">
         <select id="matchBigMin">${bigOpts.join('')}</select>
         <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K, 2)}</p>
       </div>
@@ -636,6 +638,110 @@ function renderTimeReport(){
 }
 
 /* ============================================================
+   莊家須知 —— 賽事當天需要記得的事，直接放在後台
+   ============================================================ */
+function renderGuideTab(){
+  const champ = state.markets.find(m => m.category === 'multi');
+  const anyMatch = state.markets.find(m => m.category === 'binary');
+  const cRate = champ ? (bookMargin(champ)/(1+bookMargin(champ))*100) : null;
+  const mRate = anyMatch ? (bookMargin(anyMatch)/(1+bookMargin(anyMatch))*100) : null;
+  const unnamed = state.players.filter((p,i)=> p === `選手${i+1}`).length;
+
+  return `
+  <div class="panel guide">
+    <h2>① 每場比賽的操作順序</h2>
+    <ol>
+      <li>開盤（單挑賽事一鍵建三個盤）→ 大家下注</li>
+      <li><b>比賽開始前，用頁面頂端的警示區「封盤這一場」</b> —— 只封那一場，其他場次繼續收注</li>
+      <li>比賽結束、公布結果 → 在該盤選正確結果 → 結算並派彩</li>
+      <li>結算錯了按「撤銷結算」，注單全部保留，可以改判</li>
+    </ol>
+    <p class="warn-line">忘記封盤是最容易真的賠錢的失誤 —— 現場看得到結果的人還能下注，賠率鎖定救不了你。</p>
+  </div>
+
+  <div class="panel guide">
+    <h2>② 定價：唯一真正決定你賺賠的事</h2>
+    <p>上限只限制虧損規模，<b>定價才決定你到底賺還是賠</b>。</p>
+    <p><b>賠率的倒數就是「隱含機率」。</b>開 12.80x 等於你認為那人有 7.8% 機率奪冠。</p>
+    <table class="ledger">
+      <thead><tr><th>某選手真實機率</th><th class="num">你開 12.80x 時每 $1,000 的期望</th></tr></thead>
+      <tbody>
+        <tr><td>6.25%（16 人完全均等）</td><td class="num profit-pos">+200</td></tr>
+        <tr><td>12.5%</td><td class="num">0　← 損益兩平</td></tr>
+        <tr><td>15%（明顯熱門）</td><td class="num profit-neg">−920</td></tr>
+        <tr><td>25%（公認大魔王）</td><td class="num profit-neg">−2,200</td></tr>
+      </tbody>
+    </table>
+    <p class="warn-line">已知的強者一定要開低價。低估強者的代價遠大於高估弱者的收穫 ——
+      分級時遇到猶豫的人，往上放。</p>
+    <p>調完賠率看盤口卡上的<b>利潤率</b>，維持在 <b>+20~30%</b>（多選項盤）或 <b>+5~10%</b>（雙選項盤）。
+      <b>負值代表你長期會賠錢。</b></p>
+  </div>
+
+  <div class="panel guide">
+    <h2>③ 定價黏性是什麼</h2>
+    <p>黏性 = <b>假裝莊家自己先押了多少錢在他開的價上</b>。這筆錢你不用真的出，純粹是定價參數。</p>
+    <p>它平均分給每個選項。例如黏性 50,000 的 16 人盤，每位選手身上有
+      <b>50,000 ÷ 16 = 3,125</b> 的虛擬籌碼。有人押 $5,000 進去，比重就翻 2.6 倍，賠率掉到約 1/2.6 ——
+      這就是為什麼一個人押滿就能把 12.80x 打到 5.42x。</p>
+    <table class="ledger">
+      <thead><tr><th>黏性</th><th>效果</th></tr></thead>
+      <tbody>
+        <tr><td>小</td><td>價格劇烈跳動，<b>但你受保護</b>（後面的人拿不到高賠率）</td></tr>
+        <tr><td>大</td><td>價格穩定、早晚下注較公平，<b>但你曝險更大</b></td></tr>
+      </tbody>
+    </table>
+    <p class="note-line">抽水率<b>不影響</b>遞減速度，只決定起始價高低。兩件獨立的事。</p>
+  </div>
+
+  <div class="panel guide">
+    <h2>④ 你現在的期望收益</h2>
+    <p>期望收益率 = <code>(overround − 1) ÷ overround</code>，也就是佔投注額的百分比。</p>
+    <table class="ledger">
+      <thead><tr><th>盤別</th><th class="num">目前水錢</th><th class="num">期望收益率</th><th>真實球版</th></tr></thead>
+      <tbody>
+        <tr><td>多選項（冠軍盤）</td><td class="num">${champ?'+'+(bookMargin(champ)*100).toFixed(1)+'%':'—'}</td>
+            <td class="num">${cRate!==null?cRate.toFixed(1)+'%':'—'}</td><td>120~140%</td></tr>
+        <tr><td>雙選項（單挑盤）</td><td class="num">${anyMatch?'+'+(bookMargin(anyMatch)*100).toFixed(1)+'%':'—'}</td>
+            <td class="num">${mRate!==null?mRate.toFixed(1)+'%':'—'}</td><td>102~108%</td></tr>
+      </tbody>
+    </table>
+    <p class="note-line">前提是定價正確。定價錯了，這個數字沒有意義。</p>
+  </div>
+
+  <div class="panel guide">
+    <h2>⑤ 三道防線</h2>
+    <table class="ledger">
+      <thead><tr><th>機制</th><th>作用</th></tr></thead>
+      <tbody>
+        <tr><td>單筆上限</td><td>限制單次下注金額。<b>分次下注對你有利</b>——每筆之間賠率會下降</td></tr>
+        <tr><td>每人上限</td><td>防止一個人吃光額度。比對裝置與暱稱，換裝置又改名可繞過（軟性）</td></tr>
+        <tr><td>單選項曝險上限</td><td><b>最重要</b>。某選項的賠付風險觸頂就擋下該選項的新注，其他選項照常開放</td></tr>
+      </tbody>
+    </table>
+    <p class="note-line">多選項盤（16 個選項、賠率高）一定要設曝險上限。
+      雙選項盤賠率低、選項少，自我保護已足夠，通常不用設。</p>
+  </div>
+
+  <div class="panel guide">
+    <h2>⑥ 賽前檢查</h2>
+    <table class="ledger">
+      <tbody>
+        <tr><td>${unnamed === 0 ? '✅' : '⚠️'} 16 位選手改成真實姓名</td>
+            <td class="num">${unnamed === 0 ? '已完成' : `還有 ${unnamed} 位是預設名`}</td></tr>
+        <tr><td>${champ && champ.options.some(o=>o.odds !== champ.options[0].odds) ? '✅' : '⚠️'} 冠軍盤依實力差別定價</td>
+            <td class="num">${champ ? (champ.options.some(o=>o.odds !== champ.options[0].odds) ? '已分級' : '目前全部同價') : '尚無盤口'}</td></tr>
+        <tr><td>${lastExportAt ? '✅' : '⚠️'} 匯出備份</td>
+            <td class="num">${lastExportAt ? '本次已匯出' : '尚未匯出'}</td></tr>
+        <tr><td>Firebase 規則（選用）</td>
+            <td class="num">未發布時所有限制都只是前端檢查</td></tr>
+      </tbody>
+    </table>
+    <p class="note-line">誤刪盤口與重置賽事<b>無法復原</b>，備份是唯一的後路。</p>
+  </div>`;
+}
+
+/* ============================================================
    設定
    ============================================================ */
 function renderSettingsTab(){
@@ -649,9 +755,20 @@ function renderSettingsTab(){
         </div>
       </div>
       <div class="form-col">
-        <h3>單筆投注上限</h3>
+        <h3>單筆投注上限（全域）</h3>
         <input data-max-bet="1" id="maxBetInput" type="number" min="100" step="100" value="${state.maxBet}">
-        <p class="form-hint">目前 <b>$${fmt(state.maxBet)}</b>。上限越小，自動調價的波動越平緩。改完按 Enter 或點其他地方生效。</p>
+        <p class="form-hint">目前 <b>$${fmt(state.maxBet)}</b>。個別盤口可以在盤口卡上覆寫。</p>
+        <h3 style="margin-top:16px;">莊家名單（禁止下注）</h3>
+        <input data-bankers="1" id="bankersInput" placeholder="用逗號分隔，例如：小明,阿華"
+               value="${esc((state.bankers || []).join(','))}">
+        <p class="form-hint">
+          選填。填了的話，名單上的人<b>在任何盤口都不能下注</b>，玩家頁會直接顯示提示。
+          留空則不啟用，靠現場口頭約定即可。<br>
+          比對暱稱（忽略大小寫與空白）。目前：${
+            (state.bankers || []).length
+              ? `<b>${(state.bankers).map(esc).join('、')}</b>`
+              : '未啟用（靠現場約定）'}
+        </p>
       </div>
       <div class="form-col">
         <h3>連線診斷</h3>
@@ -779,6 +896,14 @@ function attachHandlers(){
 
   const testConnBtn = document.getElementById('testConnBtn');
   if(testConnBtn) testConnBtn.onclick = testConnection;
+  const bankersInput = document.getElementById('bankersInput');
+  if(bankersInput) bankersInput.onchange = async ()=>{
+    const list = bankersInput.value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
+    try{
+      await db.ref(`${DB_PATH}/bankers`).set(list.length ? list : null);
+      showToast(list.length ? `莊家名單已設為 ${list.join('、')}` : '莊家名單已清空');
+    }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
+  };
   const exportBtn = document.getElementById('exportBtn');
   if(exportBtn) exportBtn.onclick = doExport;
   const importFile = document.getElementById('importFile');
@@ -798,7 +923,10 @@ async function createMatch(){
     banker:  document.getElementById('matchBanker').value,
     priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DEFAULT_PRIOR_K)),
     bigMin:  parseInt(document.getElementById('matchBigMin').value, 10),
-    maxLiability: Math.max(0, Math.round(parseFloat(document.getElementById('matchLiab').value) || MATCH_MAX_LIABILITY)),
+    maxLiability: (function(){
+      const v = document.getElementById('matchLiab').value.trim();
+      return v === '' ? null : Math.max(0, Math.round(parseFloat(v)));
+    })(),
   });
   if(built.error){ showToast(built.error); return; }
 

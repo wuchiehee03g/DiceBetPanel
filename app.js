@@ -32,7 +32,6 @@ const DICE_PIPS      = ['⚀','⚁','⚂','⚃','⚄','⚅'];
 const MAX_HP = 5;
 const DEFAULT_BIG_MIN = 3;
 const MATCH_OVERROUND = 1.10;   // 單挑盤的預設莊家水錢：+10%
-const MATCH_MAX_LIABILITY = 15000;  // 單挑盤每個選項的預設賠付上限
 
 /* 獲勝者剩餘血格的機率分布 ------------------------------------------
    假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
@@ -117,9 +116,11 @@ function buildMatchMarkets(opts){
   if(ai === bi)                   return { error:'兩位參賽玩家不能相同' };
   if(!banker)                     return { error:'請輸入莊家名字' };
 
+  // 曝險上限預設不設（單挑盤只有兩個選項、賠率低，自我保護已經夠）
   const maxLiability = (typeof opts.maxLiability === 'number' && opts.maxLiability > 0)
-    ? opts.maxLiability : MATCH_MAX_LIABILITY;
-  const base = { category:'binary', banker, matchNo, autoPrice:true, priorK, maxLiability,
+    ? opts.maxLiability : null;
+  const base = { category:'binary', banker, matchNo, autoPrice:true, priorK,
+                 ...(maxLiability ? { maxLiability } : {}),
                  locked:false, settled:false, winnerId:null };
   const bs = bigSmallProbs(bigMin);
   const oe = oddEvenProbs();
@@ -239,7 +240,13 @@ function normalize(raw){
 
   const maxBet = (typeof raw.maxBet === 'number' && raw.maxBet > 0) ? raw.maxBet : DEFAULT_MAX_BET;
 
-  return { schema: raw.schema || 3, maxBet, players, markets, bets };
+  // 全域禁止下注名單：擔任莊家的人（他們同時也是參賽選手）不能參與任何賭盤
+  const rawBankers = raw.bankers;
+  const bankers = (Array.isArray(rawBankers) ? rawBankers : Object.values(rawBankers || {}))
+    .filter(n => typeof n === 'string' && n.trim())
+    .map(n => n.trim());
+
+  return { schema: raw.schema || 3, maxBet, bankers, players, markets, bets };
 }
 
 /* ---------- 池額索引 ---------- */
@@ -439,6 +446,24 @@ function checkLiability(state, pools, market, optId, amount, oddsAtBet){
   return { ok:true };
 }
 
+/* 禁止下注的身分 ----------------------------------------------------
+   擔任莊家的人不能下注：他們是賭盤的對手方，而且同時也是參賽選手，
+   自己押自己的比賽會有作假疑慮。
+
+   兩種來源：全域莊家名單（state.bankers）＋ 該盤自己標記的莊家。
+   比對時忽略前後空白與大小寫。
+   ------------------------------------------------------------------ */
+function isBannedBettor(state, market, name){
+  const nm = String(name || '').trim().toLowerCase();
+  if(!nm) return null;
+  const inGlobal = (state.bankers || []).some(b => b.trim().toLowerCase() === nm);
+  if(inGlobal) return { banned:true, reason:'你是本次賽事的莊家，不能參與下注' };
+  if(market && String(market.banker || '').trim().toLowerCase() === nm){
+    return { banned:true, reason:'你是這盤的莊家，不能在自己的盤上下注' };
+  }
+  return null;
+}
+
 /* 每人限額 ----------------------------------------------------------
    身分同時比對 bettorId（裝置）與暱稱，任一相符就算同一個人——
    換裝置但用同名字、或同裝置改名字，兩種繞法都會被算進去。
@@ -560,7 +585,7 @@ if(typeof module !== 'undefined' && module.exports){
     DB_PATH, PLAYER_COUNT, DEFAULT_ODDS, DEFAULT_PRIOR_K, DEFAULT_MAX_BET,
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
-    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, MATCH_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
+    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, bigSmallDesc, oddEvenDesc,
     hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
@@ -568,7 +593,7 @@ if(typeof module !== 'undefined' && module.exports){
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
-    bettorStakeOn, checkPerBettor,
+    bettorStakeOn, checkPerBettor, isBannedBettor,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };
 }
