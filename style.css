@@ -235,6 +235,16 @@ header.board-header.banker{border-bottom-color:var(--blue);}
 .liab-label{font-size:11px;color:var(--ivory-dim);font-family:'JetBrains Mono',monospace;margin-bottom:4px;}
 .liab-gauge .bar-track{height:8px;}
 .liab-full{font-size:11px;color:var(--red-bright);font-weight:700;margin-top:4px;}
+.open-warn .ow-head{font-size:14px;font-weight:700;margin-bottom:4px;}
+.open-warn .ow-head b{color:var(--red-bright);font-size:17px;}
+.open-warn .ow-list{font-size:12px;color:var(--ivory-dim);margin-bottom:6px;line-height:1.6;}
+.open-warn .ow-note{font-size:11.5px;color:var(--ivory-dim);margin-bottom:10px;line-height:1.6;}
+.open-warn button{
+  background:var(--red);color:var(--ivory);border:none;border-radius:4px;
+  padding:10px 18px;font-size:13.5px;font-weight:700;cursor:pointer;
+  font-family:'Oswald','Noto Sans TC',sans-serif;letter-spacing:0.5px;
+}
+.open-warn button:hover{background:var(--red-bright);}
 
 /* ---------- action bars ---------- */
 .settle-bar{

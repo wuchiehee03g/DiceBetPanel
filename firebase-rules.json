@@ -1,0 +1,88 @@
+{
+  "_說明": [
+    "貼到 Firebase 主控台 → Realtime Database → 規則 → 發布。",
+    "",
+    "這組規則把「金額上限」「封盤後不能下注」「賠率範圍」從前端 JavaScript",
+    "搬到資料庫層。前端檢查任何人都能繞過（直接打 REST），資料庫層不能。",
+    "",
+    "仍然刻意保持開放的部分（信任制，見 README）：",
+    "  · 任何人都能讀全部資料",
+    "  · 任何人都能開盤、改賠率、封盤、結算",
+    "  · 任何人都能刪注單（因為刪盤口與重置賽事需要這個權限）",
+    "",
+    "擋下來的部分：",
+    "  · 超過該盤單筆上限的注單",
+    "  · 已封盤或已結算的盤口還想下注",
+    "  · 賠率超出 1.01 ~ 50 的注單",
+    "  · 欄位殘缺或型別錯誤的注單"
+  ],
+
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "diceLiarKingState": {
+      ".read": true,
+
+      "schema":  { ".write": true, ".validate": "newData.isNumber()" },
+
+      "maxBet": {
+        ".write": true,
+        ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 1000000"
+      },
+
+      "players": {
+        ".write": true,
+        "$i": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" }
+      },
+
+      "markets": {
+        ".write": true,
+        "$mid": {
+          ".validate": "!newData.exists() || newData.hasChildren(['title'])",
+          "title":        { ".validate": "newData.isString() && newData.val().length <= 80" },
+          "desc":         { ".validate": "newData.isString() && newData.val().length <= 200" },
+          "banker":       { ".validate": "newData.isString() && newData.val().length <= 20" },
+          "category":     { ".validate": "newData.val() == 'multi' || newData.val() == 'binary' || newData.val() == 'special'" },
+          "matchNo":      { ".validate": "newData.isString() && newData.val().length <= 12" },
+          "locked":       { ".validate": "newData.isBoolean()" },
+          "settled":      { ".validate": "newData.isBoolean()" },
+          "autoPrice":    { ".validate": "newData.isBoolean()" },
+          "order":        { ".validate": "newData.isNumber()" },
+          "priorK":       { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "maxBet":       { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "maxPerBettor": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "maxLiability": { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "options": {
+            "$oid": {
+              "label": { ".validate": "newData.isString() && newData.val().length <= 30" },
+              "order": { ".validate": "newData.isNumber()" },
+              "odds":  { ".validate": "newData.isNumber() && newData.val() > 1 && newData.val() <= 50" }
+            }
+          }
+        }
+      },
+
+      "bets": {
+        ".write": true,
+
+        "$bid": {
+          ".validate": "!newData.exists() || (newData.hasChildren(['marketId','optionId','name','amount','ts']) && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).exists() && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('locked').val() != true && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('settled').val() != true && newData.child('amount').isNumber() && newData.child('amount').val() > 0 && newData.child('amount').val() <= (root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('maxBet').exists() ? root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('maxBet').val() : root.child('diceLiarKingState/maxBet').val()))",
+
+          "marketId":  { ".validate": "newData.isString()" },
+          "optionId":  { ".validate": "newData.isString()" },
+          "name":      { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20" },
+          "bettorId":  { ".validate": "newData.isString() && newData.val().length <= 32" },
+          "amount":    { ".validate": "newData.isNumber() && newData.val() > 0" },
+          "ts":        { ".validate": "newData.isNumber()" },
+          "oddsAtBet": { ".validate": "newData.isNumber() && newData.val() > 1 && newData.val() <= 50" },
+          "$other":    { ".validate": false }
+        }
+      },
+
+      "__connTest__": { ".write": true },
+
+      "$other": { ".validate": false }
+    }
+  }
+}

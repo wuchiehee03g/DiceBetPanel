@@ -32,6 +32,7 @@ const DICE_PIPS      = ['⚀','⚁','⚂','⚃','⚄','⚅'];
 const MAX_HP = 5;
 const DEFAULT_BIG_MIN = 3;
 const MATCH_OVERROUND = 1.10;   // 單挑盤的預設莊家水錢：+10%
+const MATCH_MAX_LIABILITY = 15000;  // 單挑盤每個選項的預設賠付上限
 
 /* 獲勝者剩餘血格的機率分布 ------------------------------------------
    假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
@@ -116,7 +117,9 @@ function buildMatchMarkets(opts){
   if(ai === bi)                   return { error:'兩位參賽玩家不能相同' };
   if(!banker)                     return { error:'請輸入莊家名字' };
 
-  const base = { category:'binary', banker, matchNo, autoPrice:true, priorK,
+  const maxLiability = (typeof opts.maxLiability === 'number' && opts.maxLiability > 0)
+    ? opts.maxLiability : MATCH_MAX_LIABILITY;
+  const base = { category:'binary', banker, matchNo, autoPrice:true, priorK, maxLiability,
                  locked:false, settled:false, winnerId:null };
   const bs = bigSmallProbs(bigMin);
   const oe = oddEvenProbs();
@@ -557,7 +560,7 @@ if(typeof module !== 'undefined' && module.exports){
     DB_PATH, PLAYER_COUNT, DEFAULT_ODDS, DEFAULT_PRIOR_K, DEFAULT_MAX_BET,
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
-    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, bigSmallDesc, oddEvenDesc,
+    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, MATCH_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
     hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,

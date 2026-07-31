@@ -28,6 +28,7 @@
     <span class="conn-dot" id="connDot"></span><span id="connText">已連線。</span>
   </div>
 
+  <div id="openWarn"></div>
   <section class="summary-strip" id="summaryStrip"></section>
 
   <nav class="tabs" id="tabs"></nav>
@@ -62,6 +63,7 @@ let activeTab = 'markets';
 let timeBucket = 10;
 let newCategory = 'binary';
 let binarySource = 'roster';
+let lastExportAt = null;   // 這次開啟後有沒有匯出過備份（重置時的防呆）
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -87,7 +89,14 @@ function boot(){
     document.getElementById('connDot').classList.toggle('on', on);
     document.getElementById('connText').textContent = on ? '已連線。' : '連線中斷，正在重連……';
   });
-  db.ref(DB_PATH).transaction(cur => (cur === null ? seed() : undefined)).catch(()=>{});
+  // 逐分支寫入而不是整個節點 set()——Firebase 規則只在各分支開放寫入，
+  // 對根節點的整包寫入會被擋下（見 firebase-rules.json）
+  db.ref(`${DB_PATH}/schema`).once('value').then(s=>{
+    if(!s.exists()){
+      const sd = seed();
+      db.ref(DB_PATH).update({ schema:sd.schema, maxBet:sd.maxBet, players:sd.players }).catch(()=>{});
+    }
+  }).catch(()=>{});
   db.ref(DB_PATH).on('value', s=>{
     state = normalize(s.val()); pools = buildPools(state);
     setStorageWarning(false); render();
@@ -99,7 +108,7 @@ function boot(){
 
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
-                    'binA','binB','matchA','matchB','matchBanker','matchPriorK',
+                    'binA','binB','matchA','matchB','matchBanker','matchPriorK','matchLiab',
                     'marketMax','marketPer','marketLiab'];
 function captureFocus(){
   const el = document.activeElement;
@@ -121,8 +130,40 @@ function restoreFocus(f){
   try{ el.setSelectionRange(f.s, f.e); }catch(err){}
 }
 
+/* 開賽後忘記封盤是最容易真的賠錢的操作失誤——現場有人看著比賽，
+   在勝負底定的瞬間掏手機下注。所以把「還開著的盤」做成常駐警示。 */
+function renderOpenWarning(){
+  const open = state.markets.filter(m => !m.settled && !m.locked);
+  const el = document.getElementById('openWarn');
+  if(open.length === 0){
+    el.innerHTML = state.markets.some(m=>!m.settled)
+      ? `<div class="banner ok">✅ 所有未結算的盤口都已封盤，可以安心開打。</div>` : '';
+    return;
+  }
+  el.innerHTML = `<div class="banner warn open-warn">
+    <div class="ow-head">⚠️ 有 <b>${open.length}</b> 個盤口還開放下注中</div>
+    <div class="ow-list">${open.map(m=>esc(m.title)).join('　·　')}</div>
+    <div class="ow-note">比賽開始前務必封盤 —— 否則現場看得到結果的人還能下注，賠率鎖定救不了你。</div>
+    <button type="button" id="lockAllBtn">一鍵封盤全部（${open.length} 個）</button>
+  </div>`;
+  document.getElementById('lockAllBtn').onclick = lockAll;
+}
+
+async function lockAll(){
+  const open = state.markets.filter(m => !m.settled && !m.locked);
+  if(open.length === 0) return;
+  if(!confirm(`確定把這 ${open.length} 個盤口全部封盤？\n\n${open.map(m=>'· '+m.title).join('\n')}\n\n封盤後玩家無法再下注，之後可以個別重新開盤。`)) return;
+  const updates = {};
+  open.forEach(m=>{ updates[`markets/${m.id}/locked`] = true; });
+  try{
+    await db.ref(DB_PATH).update(updates);
+    showToast(`已封盤 ${open.length} 個盤口`);
+  }catch(e){ showToast('封盤失敗：' + String(e).slice(0,60)); }
+}
+
 function render(){
   const f = captureFocus();
+  renderOpenWarning();
   renderSummary();
   renderTabs();
   const main = document.getElementById('main');
@@ -231,6 +272,8 @@ function renderMatchPanel(){
         <input data-match-banker="1" id="matchBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
         <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
                value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
+        <input data-match-liab="1" id="matchLiab" type="number" min="0" step="1000"
+               value="${MATCH_MAX_LIABILITY}" placeholder="單選項曝險上限">
         <select id="matchBigMin">${bigOpts.join('')}</select>
         <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K, 2)}</p>
       </div>
@@ -730,6 +773,7 @@ async function createMatch(){
     banker:  document.getElementById('matchBanker').value,
     priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DEFAULT_PRIOR_K)),
     bigMin:  parseInt(document.getElementById('matchBigMin').value, 10),
+    maxLiability: Math.max(0, Math.round(parseFloat(document.getElementById('matchLiab').value) || MATCH_MAX_LIABILITY)),
   });
   if(built.error){ showToast(built.error); return; }
 
@@ -809,6 +853,15 @@ async function settleMarket(marketId){
   if(!market) return;
   const winOpt = market.options.find(o=>o.id === winnerId);
   const info = settleInfo(state, pools, { ...market, winnerId });
+
+  // 防呆：還開著就結算，代表剛剛那段時間有人可能已知結果還在下注
+  if(!market.locked && !confirm(
+    `⚠️ 這個盤口還沒封盤！\n\n` +
+    `代表剛才比賽進行中一直開放下注 —— 現場看得到結果的人可能已經押進來了。\n\n` +
+    `建議先取消，檢查一下最後幾筆注單的時間，確認沒有異常再結算。\n\n` +
+    `仍要直接結算嗎？`
+  )) return;
+
   if(!confirm(
     `確定以「${optionLabel(state, market, winOpt)}」結算「${market.title}」？\n\n` +
     `收到注金 $${fmt(info.total)}\n派彩 $${fmt(info.payoutTotal)}\n` +
@@ -927,7 +980,9 @@ async function doExport(){
   a.download = `吹牛王投注備份-${new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')}.json`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
+  lastExportAt = Date.now();
   showToast('備份已下載');
+  render();
 }
 
 function doImport(e){
@@ -939,7 +994,14 @@ function doImport(e){
       const parsed = JSON.parse(ev.target.result);
       if(!parsed || typeof parsed !== 'object') throw new Error('格式不對');
       if(confirm('確定要用這個備份檔覆蓋目前的所有資料嗎？')){
-        await db.ref(DB_PATH).set(parsed);
+        // 逐分支寫入，不要對根節點做整包 set（會被 Firebase 規則擋下）
+        await db.ref(DB_PATH).update({
+          schema:  parsed.schema  || 3,
+          maxBet:  parsed.maxBet  || DEFAULT_MAX_BET,
+          players: parsed.players || seed().players,
+          markets: parsed.markets || null,
+          bets:    parsed.bets    || null
+        });
         showToast('備份已還原');
       }
     }catch(err){ showToast('這個檔案看起來不是有效的備份檔'); }
@@ -949,10 +1011,24 @@ function doImport(e){
 }
 
 async function doReset(){
-  if(!confirm('這會清空所有盤口與下注紀錄，確定重置整個賽事嗎？\n\n建議先按「匯出備份」。')) return;
+  // 防呆：沒備份過就不讓重置
+  if(!lastExportAt){
+    if(!confirm('你這次開啟後還沒有匯出過備份。\n\n重置會永久刪除所有盤口與注單，強烈建議先按「匯出備份」。\n\n要現在先匯出嗎？（建議按確定）')){
+      // 使用者堅持不備份，繼續走確認流程
+    }else{
+      await doExport();
+      return;   // 匯出完停下來，讓他確認檔案沒問題再按一次重置
+    }
+  }
+  if(!confirm('這會清空所有盤口與下注紀錄，確定重置整個賽事嗎？')) return;
   if(!confirm('再確認一次：所有人的注單都會消失，且無法復原。')) return;
   try{
-    await db.ref(DB_PATH).set(seed());
+    const sd = seed();
+    // 逐分支寫入，不要對根節點做整包 set（會被 Firebase 規則擋下）
+    await db.ref(DB_PATH).update({
+      schema: sd.schema, maxBet: sd.maxBet, players: sd.players,
+      markets: null, bets: null
+    });
     showToast('賽事已重置');
   }catch(e){ showToast('重置失敗：' + String(e).slice(0,60)); }
 }
