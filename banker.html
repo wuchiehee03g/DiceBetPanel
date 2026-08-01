@@ -110,7 +110,7 @@ function boot(){
 /* ---------- 重繪時保留輸入焦點 ---------- */
 const FOCUS_KEYS = ['oddsIn','priorK','pidx','maxBet','newTitle','newBanker','newPriorK','newOptions',
                     'binA','binB','matchA','matchB','matchBanker','matchPriorK','matchLiab',
-                    'marketMax','marketPer','marketLiab','bankers'];
+                    'marketMax','marketPer','marketLiab'];
 function captureFocus(){
   const el = document.activeElement;
   if(!el || !el.dataset) return null;
@@ -756,20 +756,26 @@ function renderSettingsTab(){
         </div>
       </div>
       <div class="form-col">
-        <h3>單筆投注上限（全域）</h3>
+        <h3>單筆投注上限（全域）與下注限制</h3>
         <input data-max-bet="1" id="maxBetInput" type="number" min="100" step="100" value="${state.maxBet}">
         <p class="form-hint">目前 <b>$${fmt(state.maxBet)}</b>。個別盤口可以在盤口卡上覆寫。</p>
-        <h3 style="margin-top:16px;">莊家名單（禁止下注）</h3>
-        <input data-bankers="1" id="bankersInput" placeholder="用逗號分隔，例如：小明,阿華"
-               value="${esc((state.bankers || []).join(','))}">
+        <h3 style="margin-top:16px;">下注限制（自動，無需設定）</h3>
         <p class="form-hint">
-          選填。填了的話，名單上的人<b>在任何盤口都不能下注</b>，玩家頁會直接顯示提示。
-          留空則不啟用，靠現場口頭約定即可。<br>
-          比對暱稱（忽略大小寫與空白）。目前：${
-            (state.bankers || []).length
-              ? `<b>${(state.bankers).map(esc).join('、')}</b>`
-              : '未啟用（靠現場約定）'}
+          <b>1. 選手不能押自己參賽的場次。</b>系統拿下注暱稱比對 16 人名單，
+          對得上就視為參賽者，擋掉他那個賽事編號底下的三個盤。
+          別人的場次與總冠軍盤<b>照常可以下注</b>。<br>
+          <b>2. 盤口的莊家不能在自己的盤上下注。</b><br><br>
+          第 1 條靠「暱稱與名單同名」認人，所以<b>請參賽者用真名當暱稱</b>。
+          用別的暱稱就繞得過 —— 這是軟性限制，最終還是靠現場約定。
         </p>
+        ${(function(){
+          const rows = state.players.map((p,i)=>({ p, ms: matchNosOfPlayer(state, i) }))
+                                    .filter(r=>r.ms.length);
+          return rows.length ? `<div class="table-scroll"><table class="ledger">
+            <thead><tr><th>選手</th><th>不能押的場次</th></tr></thead>
+            <tbody>${rows.map(r=>`<tr><td>${esc(r.p)}</td><td>第 ${r.ms.map(esc).join('、')} 場</td></tr>`).join('')}</tbody>
+          </table></div>` : '<p class="form-hint">目前沒有任何單挑場次，所以還沒有人受限。</p>';
+        })()}
       </div>
       <div class="form-col">
         <h3>連線診斷</h3>
@@ -897,14 +903,6 @@ function attachHandlers(){
 
   const testConnBtn = document.getElementById('testConnBtn');
   if(testConnBtn) testConnBtn.onclick = testConnection;
-  const bankersInput = document.getElementById('bankersInput');
-  if(bankersInput) bankersInput.onchange = async ()=>{
-    const list = bankersInput.value.split(/[,，]/).map(s=>s.trim()).filter(Boolean);
-    try{
-      await db.ref(`${DB_PATH}/bankers`).set(list.length ? list : null);
-      showToast(list.length ? `莊家名單已設為 ${list.join('、')}` : '莊家名單已清空');
-    }catch(e){ showToast('更新失敗：' + String(e).slice(0,60)); }
-  };
   const exportBtn = document.getElementById('exportBtn');
   if(exportBtn) exportBtn.onclick = doExport;
   const importFile = document.getElementById('importFile');

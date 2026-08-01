@@ -240,13 +240,7 @@ function normalize(raw){
 
   const maxBet = (typeof raw.maxBet === 'number' && raw.maxBet > 0) ? raw.maxBet : DEFAULT_MAX_BET;
 
-  // 全域禁止下注名單：擔任莊家的人（他們同時也是參賽選手）不能參與任何賭盤
-  const rawBankers = raw.bankers;
-  const bankers = (Array.isArray(rawBankers) ? rawBankers : Object.values(rawBankers || {}))
-    .filter(n => typeof n === 'string' && n.trim())
-    .map(n => n.trim());
-
-  return { schema: raw.schema || 3, maxBet, bankers, players, markets, bets };
+  return { schema: raw.schema || 3, maxBet, players, markets, bets };
 }
 
 /* ---------- 池額索引 ---------- */
@@ -447,19 +441,48 @@ function checkLiability(state, pools, market, optId, amount, oddsAtBet){
 }
 
 /* 禁止下注的身分 ----------------------------------------------------
-   擔任莊家的人不能下注：他們是賭盤的對手方，而且同時也是參賽選手，
-   自己押自己的比賽會有作假疑慮。
+   兩條規則，都是自動判斷，不需要手動維護名單：
 
-   兩種來源：全域莊家名單（state.bankers）＋ 該盤自己標記的莊家。
-   比對時忽略前後空白與大小寫。
+   1. 該盤標記的莊家不能在自己的盤上下注（他是對手方）
+   2. 選手不能押自己參賽的場次 —— 押自己的比賽有放水疑慮
+
+   第 2 條靠「下注暱稱與 16 人名單同名」認人，所以參賽者要用真名當暱稱。
+   只擋他參賽的那個賽事編號底下的盤（誰獲勝、大小、單雙），
+   別人的場次與總冠軍盤照常可以下注。
    ------------------------------------------------------------------ */
+const norm = s => String(s || '').trim().toLowerCase();
+
+// 這個暱稱對應到第幾位選手；不是選手回 -1
+function playerIndexByName(state, name){
+  const nm = norm(name);
+  if(!nm) return -1;
+  return state.players.findIndex(p => norm(p) === nm);
+}
+
+// 這位選手參賽的所有賽事編號
+function matchNosOfPlayer(state, playerIndex){
+  if(playerIndex < 0) return [];
+  const optId = 'p' + playerIndex;
+  const set = new Set();
+  state.markets.forEach(m=>{
+    if(m.matchNo && m.options.some(o => o.id === optId)) set.add(m.matchNo);
+  });
+  return [...set];
+}
+
 function isBannedBettor(state, market, name){
-  const nm = String(name || '').trim().toLowerCase();
+  const nm = norm(name);
   if(!nm) return null;
-  const inGlobal = (state.bankers || []).some(b => b.trim().toLowerCase() === nm);
-  if(inGlobal) return { banned:true, reason:'你是本次賽事的莊家，不能參與下注' };
-  if(market && String(market.banker || '').trim().toLowerCase() === nm){
+
+  if(market && norm(market.banker) === nm){
     return { banned:true, reason:'你是這盤的莊家，不能在自己的盤上下注' };
+  }
+
+  const idx = playerIndexByName(state, name);
+  if(idx >= 0 && market && market.matchNo){
+    if(matchNosOfPlayer(state, idx).includes(market.matchNo)){
+      return { banned:true, reason:`你是第 ${market.matchNo} 場的參賽者，不能押自己的場次` };
+    }
   }
   return null;
 }
@@ -593,7 +616,7 @@ if(typeof module !== 'undefined' && module.exports){
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
-    bettorStakeOn, checkPerBettor, isBannedBettor,
+    bettorStakeOn, checkPerBettor, isBannedBettor, playerIndexByName, matchNosOfPlayer,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };
 }

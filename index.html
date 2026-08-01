@@ -149,20 +149,22 @@ function renderIdentity(){
     if(o.status === 'pending') pending += b.amount; else settledProfit += o.profit;
   });
   const el = document.getElementById('meStat');
-  const banned = isBannedBettor(state, null, me.name);
-  if(banned){
-    el.innerHTML = `<span style="color:var(--red-bright);font-weight:700">🚫 ${esc(banned.reason)}</span>`
-      + (mine.length ? `<br>過去的 ${mine.length} 筆注單仍然有效` : '');
-    return;
-  }
+  // 如果暱稱對得上 16 人名單，就是參賽者 —— 先告知他哪些場次不能押
+  const myIdx = playerIndexByName(state, me.name);
+  const barred = myIdx >= 0 ? matchNosOfPlayer(state, myIdx) : [];
+  const barredNote = barred.length
+    ? `<br><span style="color:var(--red-bright)">🚫 你是參賽者，不能押第 ${barred.map(esc).join('、')} 場（你自己的場次）</span>`
+    : '';
+
   if(mine.length === 0){
-    el.innerHTML = me.name ? '還沒有下注紀錄' : '先輸入暱稱才能下注';
+    el.innerHTML = (me.name ? '還沒有下注紀錄' : '先輸入暱稱才能下注') + barredNote;
     return;
   }
   const cls = settledProfit >= 0 ? 'profit-pos' : 'profit-neg';
   el.innerHTML = `我的注單 <b>${mine.length}</b> 筆　已投入 <b>$${fmt(staked)}</b>`
     + `<br>已結算損益 <span class="${cls}">${settledProfit>=0?'+':''}${fmt(settledProfit)}</span>`
-    + (pending > 0 ? `　未開 $${fmt(pending)}` : '');
+    + (pending > 0 ? `　未開 $${fmt(pending)}` : '')
+    + barredNote;
 }
 
 function renderSummary(){
