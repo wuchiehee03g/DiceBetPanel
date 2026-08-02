@@ -59,6 +59,7 @@ const firebaseConfig = {
 const NAME_KEY = 'dbp-name';
 const ID_KEY   = 'dbp-bettor-id';
 const TAB_KEY  = 'dbp-tab';
+const FOLD_KEY = 'dbp-folded';
 
 let db = null, firebaseReady = false;
 try{
@@ -71,6 +72,31 @@ let state = null, pools = {};
 let activeTab = 'multi';
 let me = { id:null, name:'' };
 const draftAmounts = {};
+
+/* 收放狀態 ------------------------------------------------------------
+   五個賽前盤各 16 個選項 = 80 列，全部展開的話手機上要滑很久。
+   所以選項多的盤預設收起，使用者自己開合的選擇會記在本機。
+   -------------------------------------------------------------------- */
+let folded = new Set();
+const FOLD_DEFAULT_OVER = 4;      // 選項數超過這個就預設收起
+function loadFolded(){
+  try{ folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY) || '[]')); }
+  catch(e){ folded = new Set(); }
+}
+function saveFolded(){
+  try{ localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); }catch(e){}
+}
+// 使用者沒表態過的盤，依選項數決定預設
+function isFolded(market){
+  if(folded.has(market.id)) return true;
+  if(folded.has('!' + market.id)) return false;      // '!id' 表示使用者明確展開過
+  return market.options.length > FOLD_DEFAULT_OVER;
+}
+function toggleFold(market){
+  if(isFolded(market)){ folded.delete(market.id); folded.add('!' + market.id); }
+  else { folded.delete('!' + market.id); folded.add(market.id); }
+  saveFolded();
+}
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -90,6 +116,7 @@ function boot(){
     const v = uid(); try{ localStorage.setItem(ID_KEY, v); }catch(e){} return v;
   })();
   me.name = localStorage.getItem(NAME_KEY) || '';
+  loadFolded();
   // 舊版用同一個 key 存過 'main'/'prop'，直接沿用會比對不到任何盤口、
   // 畫面一片空白且沒有分頁反白。所以存進來的值一定要驗證。
   const savedTab = localStorage.getItem(TAB_KEY);
@@ -211,7 +238,21 @@ function renderBody(){
     list.innerHTML = `<div class="empty-note">這個分類目前沒有盤口。<br>等莊家開盤後就會出現在這裡。</div>`;
     return;
   }
-  list.innerHTML = markets.map(renderMarketCard).join('');
+  const anyOpen = markets.some(m=>!isFolded(m));
+  list.innerHTML = `
+    <div class="fold-bar">
+      <span>${markets.length} 個盤口</span>
+      <button type="button" id="foldAllBtn">${anyOpen ? '全部收起' : '全部展開'}</button>
+    </div>`
+    + markets.map(renderMarketCard).join('');
+  const fa = document.getElementById('foldAllBtn');
+  if(fa) fa.onclick = ()=>{
+    markets.forEach(m=>{
+      if(anyOpen){ folded.delete('!' + m.id); folded.add(m.id); }
+      else { folded.delete(m.id); folded.add('!' + m.id); }
+    });
+    saveFolded(); render();
+  };
   attachHandlers();
 }
 
@@ -264,13 +305,20 @@ function renderMarketCard(market){
     banner = `<div class="lock-note">🔒 此盤已封盤，暫停下注。等莊家公布結果後結算。</div>`;
   }
 
+  const fold = isFolded(market);
+  const myTotal = state.bets
+    .filter(b => b.bettorId === me.id && b.marketId === market.id)
+    .reduce((s,b)=> s + b.amount, 0);
+
   return `
-    <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''}">
-      <div class="market-head">
-        <h2>${esc(market.title)}${market.matchNo?`<span class="chip match">第 ${esc(market.matchNo)} 場</span>`:''}<span class="chip cat">${esc(categoryLabel(market.category))}</span>${
+    <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''} ${fold?'folded':''}">
+      <div class="market-head fold-head" data-fold="${market.id}">
+        <h2><span class="fold-arrow">${fold?'▸':'▾'}</span>${esc(market.title)}${market.matchNo?`<span class="chip match">${esc(market.matchNo)}</span>`:''}<span class="chip cat">${esc(categoryLabel(market.category))}</span>${
           market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
-        <div class="market-pool-badge">總注金 $${fmt(total)}</div>
+        <div class="market-pool-badge">總注金 $${fmt(total)}${
+          myTotal ? `<br><span class="mine">我押 $${fmt(myTotal)}</span>` : ''}</div>
       </div>
+      ${fold ? `<div class="fold-hint">${market.options.length} 個選項　·　點標題展開下注</div>` : `
       <div class="banker-line">莊家：<b>${esc(market.banker)}</b>　·　單筆上限 $${fmt(effectiveMaxBet(state, market))}${
         market.maxPerBettor ? (()=>{
           const used = bettorStakeOn(state, market.id, me.id, me.name);
@@ -281,6 +329,7 @@ function renderMarketCard(market){
       ${banner}
       ${rows}
       ${market.settled ? renderLedger(market) : ''}
+      `}
     </div>`;
 }
 
@@ -419,6 +468,12 @@ function renderBracket(){
 
 /* ---------- 事件 ---------- */
 function attachHandlers(){
+  document.querySelectorAll('[data-fold]').forEach(head=>{
+    head.onclick = ()=>{
+      const m = state.markets.find(x=>x.id === head.dataset.fold);
+      if(m){ toggleFold(m); render(); }
+    };
+  });
   document.querySelectorAll('[data-bet-amt]').forEach(inp=>{
     inp.oninput = ()=>{ draftAmounts[inp.dataset.betAmt] = inp.value; };
     inp.onkeydown = (e)=>{
