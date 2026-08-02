@@ -323,6 +323,26 @@ header.board-header.banker{border-bottom-color:var(--blue);}
 .gold-btn{border-color:var(--gold);color:var(--gold-bright);}
 .gold-btn:hover{background:rgba(201,162,39,0.15);}
 
+/* ---------- 參賽者待定 ---------- */
+.pending-box{
+  background:rgba(201,162,39,0.09);border:1px solid rgba(201,162,39,0.4);
+  border-radius:5px;padding:10px 12px;margin-bottom:12px;
+}
+.pb-title{font-size:12.5px;font-weight:700;color:var(--gold-bright);margin-bottom:3px;}
+.pb-note{font-size:11px;color:var(--ivory-dim);line-height:1.6;margin-bottom:8px;}
+.pb-form{display:flex;align-items:center;gap:7px;flex-wrap:wrap;}
+.pb-form select{
+  background:#0d0b08;border:1px solid var(--gold);color:var(--ivory);
+  border-radius:4px;padding:7px 9px;font-size:12.5px;font-family:inherit;flex:1 1 110px;min-width:100px;
+}
+.pb-vs{font-size:11px;color:var(--ivory-dim);}
+.pb-form button{
+  background:var(--gold);color:#14110d;border:none;border-radius:4px;
+  padding:8px 14px;font-size:12.5px;font-weight:700;cursor:pointer;
+  font-family:'Oswald','Noto Sans TC',sans-serif;letter-spacing:0.5px;
+}
+.pb-form button:hover{filter:brightness(1.1);}
+
 /* ---------- 分類區塊 ---------- */
 .grp{margin-bottom:18px;}
 .grp-head{

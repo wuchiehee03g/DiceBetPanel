@@ -307,6 +307,50 @@ function bracketMatch(id){
 // 只有單挑場次適用「獲勝者剩餘血格」的大小／單雙盤
 function duelMatches(){ return allBracketMatches().filter(m => m.format === 'duel'); }
 
+/* 開全場的盤 ----------------------------------------------------------
+   賽事一開始就把所有盤開好，不用每場臨時開。問題是「誰獲勝」需要知道
+   對戰組合，而 3-1 之後的參賽者要等前面階段打完才知道。
+
+   所以誰獲勝盤先開成「封盤待定」（pendingPlayers: true），莊家現場指定
+   參賽者後才開放。大小／單雙的機率與誰上場無關，可以直接開放收注。
+   -------------------------------------------------------------------- */
+function buildAllDuelMarkets(opts){
+  const banker = String(opts.banker || '').trim();
+  if(!banker) return { error:'請輸入莊家名字' };
+  const out = [];
+  duelMatches().forEach((bm, mi)=>{
+    const built = buildMatchMarkets({
+      matchNo: bm.id, playerAIndex: 0, playerBIndex: 1,
+      banker, items: !!bm.items,
+      priorK: opts.priorK, maxLiability: opts.maxLiability, bigMin: opts.bigMin,
+    });
+    if(built.error) return;
+    built.markets.forEach((m, i)=>{
+      const isWin = i === 0;
+      out.push({
+        ...m,
+        order: mi * 10 + i,
+        // 誰獲勝：參賽者待定，先封盤
+        ...(isWin ? { pendingPlayers:true, locked:true } : {}),
+        ...(isWin ? { desc:'參賽者待定，等前面階段打完由莊家指定後開放' } : {}),
+      });
+    });
+  });
+  return { markets: out };
+}
+
+// 指定參賽者：把「誰獲勝」的兩個選項換成實際的兩位選手（沿用原本的賠率）
+function participantOptions(market, aIndex, bIndex){
+  const validIdx = i => Number.isInteger(i) && i >= 0 && i < PLAYER_COUNT;
+  if(!validIdx(aIndex) || !validIdx(bIndex)) return { error:'請選擇兩位參賽玩家' };
+  if(aIndex === bIndex) return { error:'兩位參賽玩家不能相同' };
+  const odds = market.options.length ? market.options[0].odds : DUEL_WIN_ODDS;
+  return { options: {
+    ['p'+aIndex]: { order:0, odds },
+    ['p'+bIndex]: { order:1, odds },
+  }};
+}
+
 const CATEGORIES = [
   { key:'multi',   label:'多選項', hint:'從 16 人名單選，例如誰奪冠、誰最先淘汰' },
   { key:'binary',  label:'雙選項', hint:'兩個選項，例如單挑誰贏、單雙、大小' },
@@ -384,6 +428,8 @@ function normalize(raw){
       maxLiability: (typeof m.maxLiability === 'number' && m.maxLiability > 0) ? m.maxLiability : null,
       // 每人在這盤的下注總額上限；null 表示不限制
       maxPerBettor: (typeof m.maxPerBettor === 'number' && m.maxPerBettor > 0) ? m.maxPerBettor : null,
+      // 「誰獲勝」盤在對戰組合還沒確定時先開好但待定，由莊家現場指定參賽者
+      pendingPlayers: !!m.pendingPlayers,
       order: typeof m.order === 'number' ? m.order : 0,
       locked: !!m.locked,
       settled: !!m.settled,
@@ -818,7 +864,7 @@ if(typeof module !== 'undefined' && module.exports){
     ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, MULTI_PRIOR_K, MULTI_MAX_LIABILITY,
     playerGroups, bigSmallDesc, oddEvenDesc,
     hpDistribution, hpDistributionItems, hpDist, bigSmallProbs, oddEvenProbs, oddsFromProb,
-    buildMatchMarkets, matchSortKey, nextMatchNo,
+    buildMatchMarkets, buildAllDuelMarkets, participantOptions, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,

@@ -241,8 +241,30 @@ function renderTabs(){
 /* ============================================================
    盤口管理
    ============================================================ */
+function renderOpenAllPanel(){
+  const have = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
+  const missing = duelMatches().filter(m=>!have.has(m.id));
+  if(missing.length === 0){
+    return `<div class="panel"><h2>全場單挑盤</h2>
+      <p class="form-hint">11 場單挑的盤都已開好。參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p></div>`;
+  }
+  return `<div class="panel">
+    <h2>一次開好全場單挑盤</h2>
+    <div class="form-col" style="max-width:460px;">
+      <p class="form-hint">
+        還沒開的場次：<b>${missing.map(m=>esc(m.id)).join('、')}</b>（${missing.length} 場，共 ${missing.length*3} 個盤）<br><br>
+        <b>大小／單雙</b>會直接開放收注 —— 血格機率與誰上場無關。<br>
+        <b>誰獲勝</b>會開成「參賽者待定」並封盤，等前面階段打完，
+        在該盤上用兩個下拉指定對戰組合就會開放。
+      </p>
+      <input id="allBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
+      <button type="button" id="openAllBtn">開好這 ${missing.length*3} 個盤</button>
+    </div>
+  </div>`;
+}
+
 function renderMarketsTab(){
-  return renderMatchPanel() + renderCreatePanel() + renderBatchPanel() +
+  return renderOpenAllPanel() + renderMatchPanel() + renderCreatePanel() + renderBatchPanel() +
     (state.markets.length === 0
       ? `<div class="empty-note">還沒有任何盤口。用上面的表單開第一個。</div>`
       : state.markets.map(renderMarketCard).join(''));
@@ -471,6 +493,22 @@ function renderMarketCard(market){
   }
 
   const margin = bookMargin(market) * 100;
+
+  // 參賽者待定的「誰獲勝」盤：現場指定對戰組合後才開放
+  const pending = market.pendingPlayers && !market.settled ? (()=>{
+    const bm = bracketMatch(market.matchNo);
+    const sel = (id, def) => `<select data-pp-${id}="${market.id}">${
+      state.players.map((p,i)=>`<option value="${i}"${i===def?' selected':''}>${esc(p)}</option>`).join('')}</select>`;
+    return `<div class="pending-box">
+      <div class="pb-title">⏳ 參賽者待定</div>
+      <div class="pb-note">${bm ? esc(bm.from) : ''}　—　等前面階段打完，在這裡指定對戰組合就會開放下注。</div>
+      <div class="pb-form">
+        ${sel('a', 0)}<span class="pb-vs">vs</span>${sel('b', 1)}
+        <button type="button" data-pp-go="${market.id}">指定並開盤</button>
+      </div>
+    </div>`;
+  })() : '';
+
   const controls = market.settled ? '' : `
     <div class="book-controls">
       <label><input type="checkbox" data-auto-toggle="${market.id}" ${market.autoPrice?'checked':''}> 自動依下注額調價</label>
@@ -517,6 +555,7 @@ function renderMarketCard(market){
         <div class="market-pool-badge">總注金 $${fmt(total)}</div>
       </div>
       <div class="banker-line">莊家：<b>${esc(market.banker)}</b></div>
+      ${pending}
       ${banner}
       ${controls}
       ${rows}
@@ -865,6 +904,8 @@ function attachHandlers(){
   if(createBtn) createBtn.onclick = createMarket;
   const matchBtn = document.getElementById('matchBtn');
   if(matchBtn) matchBtn.onclick = createMatch;
+  const openAllBtn = document.getElementById('openAllBtn');
+  if(openAllBtn) openAllBtn.onclick = openAllDuels;
 
   // 調整黏性（或選項數）時即時更新體感提示
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
@@ -942,6 +983,9 @@ function attachHandlers(){
   numField('market-per',  'marketPer',  'maxPerBettor', '每人上限');
   numField('market-liab', 'marketLiab', 'maxLiability', '單選項曝險上限');
 
+  document.querySelectorAll('[data-pp-go]').forEach(btn=>{
+    btn.onclick = ()=> setParticipants(btn.dataset.ppGo);
+  });
   document.querySelectorAll('[data-lock-btn]').forEach(b=> b.onclick = ()=> toggleLock(b.dataset.lockBtn));
   document.querySelectorAll('[data-settle-btn]').forEach(b=> b.onclick = ()=> settleMarket(b.dataset.settleBtn));
   document.querySelectorAll('[data-undo-btn]').forEach(b=> b.onclick = ()=> undoSettle(b.dataset.undoBtn));
@@ -973,6 +1017,31 @@ function attachHandlers(){
   if(importFile) importFile.onchange = doImport;
   const resetBtn = document.getElementById('resetBtn');
   if(resetBtn) resetBtn.onclick = doReset;
+}
+
+async function openAllDuels(){
+  const banker = (document.getElementById('allBanker').value || '').trim();
+  if(!banker){ showToast('請輸入莊家名字'); return; }
+  const have = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
+  const built = buildAllDuelMarkets({ banker });
+  if(built.error){ showToast(built.error); return; }
+  const todo = built.markets.filter(m=>!have.has(m.matchNo));
+  if(todo.length === 0){ showToast('所有場次都已開好'); return; }
+
+  const nos = [...new Set(todo.map(m=>m.matchNo))];
+  if(!confirm(
+    `一次開好 ${nos.length} 場、共 ${todo.length} 個盤：\n\n${nos.join('、')}\n\n` +
+    `大小／單雙直接開放收注；誰獲勝會封盤待定，之後再指定參賽者。`
+  )) return;
+
+  try{
+    const base = Date.now();
+    for(let i=0;i<todo.length;i++){
+      await db.ref(`${DB_PATH}/markets`).push({ ...todo[i], order: base + todo[i].order });
+    }
+    showToast(`已開好 ${todo.length} 個盤`);
+    render();
+  }catch(e){ showToast('開盤失敗：' + String(e).slice(0,60)); }
 }
 
 async function createMatch(){
@@ -1055,6 +1124,37 @@ async function createMarket(){
     showToast('盤口已開');
     render();
   }catch(e){ showToast('開盤失敗：' + String(e).slice(0,60)); }
+}
+
+/* 指定參賽者：把「誰獲勝」的兩個選項換成實際的兩位選手，然後開盤。
+   有注單時不允許更換 —— 換掉選項會讓已成立的注單指向不存在的選項。 */
+async function setParticipants(marketId){
+  const market = state.markets.find(m=>m.id === marketId);
+  if(!market) return;
+  const bets = state.bets.filter(b=>b.marketId === marketId);
+  if(bets.length){
+    showToast(`這盤已有 ${bets.length} 筆注單，不能再換參賽者`);
+    return;
+  }
+  const ai = parseInt(document.querySelector(`[data-pp-a="${marketId}"]`).value, 10);
+  const bi = parseInt(document.querySelector(`[data-pp-b="${marketId}"]`).value, 10);
+  const built = participantOptions(market, ai, bi);
+  if(built.error){ showToast(built.error); return; }
+
+  if(!confirm(
+    `${market.matchNo} 的對戰組合設為：\n\n${state.players[ai]}　vs　${state.players[bi]}\n\n` +
+    `確定後這個盤會開放下注（賠率 ${market.options[0].odds.toFixed(2)}x 同價）。`
+  )) return;
+
+  try{
+    await db.ref(`${DB_PATH}/markets/${marketId}`).update({
+      options: built.options,
+      pendingPlayers: null,
+      locked: false,
+      desc: `${state.players[ai]} vs ${state.players[bi]}`,
+    });
+    showToast(`${market.matchNo} 已開盤：${state.players[ai]} vs ${state.players[bi]}`);
+  }catch(e){ showToast('設定失敗：' + String(e).slice(0,60)); }
 }
 
 async function toggleLock(marketId){
