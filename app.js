@@ -697,17 +697,41 @@ function checkLiability(state, pools, market, optId, amount, oddsAtBet){
    1. 該盤標記的莊家不能在自己的盤上下注（他是對手方）
    2. 選手不能押自己參賽的場次 —— 押自己的比賽有放水疑慮
 
-   第 2 條靠「下注暱稱與 16 人名單同名」認人，所以參賽者要用真名當暱稱。
+   第 2 條靠「下注暱稱對得上 16 人名單」認人，所以參賽者要用真名當暱稱
+   （尾端的選手編號可有可無，見 sameNickname）。
    只擋他參賽的那個賽事編號底下的盤（誰獲勝、大小、單雙），
    別人的場次與總冠軍盤照常可以下注。
    ------------------------------------------------------------------ */
 const norm = s => String(s || '').trim().toLowerCase();
 
-// 這個暱稱對應到第幾位選手；不是選手回 -1
+/* 暱稱容忍尾端的選手編號 ---------------------------------------------
+   現場每位選手都有編號，下注時習慣把編號打在名字後面（「小明7」）。
+   但名單可能只填真名，也可能填「小明 7」「小明-07」，逐字比對會漏掉。
+   所以拆成「名字」+「尾端編號」兩段，名字相同就算同一個人；
+   兩邊都有編號時編號必須一致 —— 這樣「阿明1」與「阿明9」不會被混為一人。
+   ------------------------------------------------------------------ */
+function splitNickname(s){
+  const t = norm(s).replace(/\s+/g, '');
+  const m = /^(.*?)[-_#＃.、·]*(\d{1,2})$/.exec(t);
+  return m ? { base: m[1], num: Number(m[2]) } : { base: t, num: null };
+}
+
+function sameNickname(a, b){
+  const x = splitNickname(a), y = splitNickname(b);
+  if(!x.base || !y.base) return false;   // 只打編號認不出人，寧可放過也不誤鎖
+  return x.base === y.base && (x.num == null || y.num == null || x.num === y.num);
+}
+
+// 這個暱稱對應到第幾位選手；不是選手、或有兩位以上分不出來時回 -1
 function playerIndexByName(state, name){
   const nm = norm(name);
   if(!nm) return -1;
-  return state.players.findIndex(p => norm(p) === nm);
+  const exact = state.players.findIndex(p => norm(p) === nm);
+  if(exact >= 0) return exact;
+
+  const hits = [];
+  state.players.forEach((p, i)=>{ if(sameNickname(p, name)) hits.push(i); });
+  return hits.length === 1 ? hits[0] : -1;   // 有歧義就不猜
 }
 
 // 這位選手參賽的所有賽事編號
@@ -725,7 +749,7 @@ function isBannedBettor(state, market, name){
   const nm = norm(name);
   if(!nm) return null;
 
-  if(market && norm(market.banker) === nm){
+  if(market && market.banker && sameNickname(market.banker, name)){
     return { banned:true, reason:'你是這盤的莊家，不能在自己的盤上下注' };
   }
 
@@ -738,6 +762,160 @@ function isBannedBettor(state, market, name){
   return null;
 }
 
+/* 設定基準點與獨立還原 ----------------------------------------------
+   38 個盤口的賠率、黏性、上限都是算過、對過的。開賽當天很多人會摸到
+   莊家頁，手滑改壞一個賠率、誤按封盤或結算，全部重置是唯一的後路——
+   代價是連注單一起沒了，太重。
+
+   所以把「已驗證正確的配置」整包存到 baseline 分支，之後可以
+   一鍵還原：全部、單一場次、或單一盤口。
+
+   關鍵原則：**還原配置絕不碰 bets**。帳本是唯一真實來源
+   （見 dicebetpanel-ledger-source-of-truth），改壞的是配置就只修配置。
+   清注單是另一個獨立的動作，由使用者分開決定。
+   ------------------------------------------------------------------ */
+const BASELINE_FIELDS = ['title','desc','category','banker','matchNo','order',
+                         'autoPrice','priorK','maxBet','maxPerBettor','maxLiability',
+                         'pendingPlayers'];
+
+// 把目前的盤口配置拍成快照（不含 locked/settled/winnerId —— 那是賽程進度，不是配置）
+function snapshotMarkets(state){
+  const out = {};
+  state.markets.forEach(m=>{
+    const cfg = {};
+    BASELINE_FIELDS.forEach(f=>{ cfg[f] = (m[f] === undefined) ? null : m[f]; });
+    cfg.options = {};
+    m.options.forEach(o=>{ cfg.options[o.id] = { label:o.label, order:o.order, odds:o.odds }; });
+    out[m.id] = cfg;
+  });
+  return out;
+}
+
+function baselineMarkets(raw){
+  const b = (raw && raw.baseline) || null;
+  if(!b || !b.markets) return null;
+  return { ts: b.ts || null, markets: b.markets, players: b.players || null, maxBet: b.maxBet || null };
+}
+
+// 哪些盤口的配置跟基準點不一樣？回傳人看得懂的差異清單
+function baselineDiff(state, baseline){
+  if(!baseline) return null;
+  const byId = new Map(state.markets.map(m=>[m.id, m]));
+  const rows = [];
+
+  Object.entries(baseline.markets).forEach(([id, cfg])=>{
+    const m = byId.get(id);
+    if(!m){
+      rows.push({ id, matchNo:cfg.matchNo || null, title:cfg.title || '(未命名)',
+                  kind:'missing', changes:['整個盤口不見了'] });
+      return;
+    }
+    const changes = [];
+    BASELINE_FIELDS.forEach(f=>{
+      const want = cfg[f] === undefined ? null : cfg[f];
+      const got  = m[f] === undefined ? null : m[f];
+      if(String(want) !== String(got)) changes.push(`${f}：${want} → ${got}`);
+    });
+    const gotOpts = new Map(m.options.map(o=>[o.id, o]));
+    Object.entries(cfg.options || {}).forEach(([oid, o])=>{
+      const g = gotOpts.get(oid);
+      if(!g){ changes.push(`選項 ${oid} 不見了`); return; }
+      if(Number(g.odds) !== Number(o.odds)) changes.push(`${o.label || oid} 賠率：${o.odds} → ${g.odds}`);
+      if((g.label||null) !== (o.label||null)) changes.push(`選項 ${oid} 標籤：${o.label} → ${g.label}`);
+    });
+    m.options.forEach(o=>{ if(!(cfg.options||{})[o.id]) changes.push(`多了選項 ${o.label || o.id}`); });
+    if(changes.length) rows.push({ id, matchNo:m.matchNo, title:m.title, kind:'changed', changes });
+  });
+
+  const extra = state.markets.filter(m=>!baseline.markets[m.id])
+    .map(m=>({ id:m.id, matchNo:m.matchNo, title:m.title, kind:'extra',
+               changes:['基準點裡沒有這個盤口（基準點之後才開的）'] }));
+
+  return rows.concat(extra);
+}
+
+/* 還原範圍：'all' 全部 / 'pre' 賽前盤（沒有賽事編號的）/ 其他字串當賽事編號 */
+function inScope(scope, matchNo){
+  if(scope === 'all') return true;
+  if(scope === 'pre') return !matchNo;
+  return matchNo === scope;
+}
+
+/* 產生還原用的多路徑 update 物件（相對於 DB_PATH）。
+   只寫配置欄位；locked/settled/winnerId 一併清掉（誤按結算是最常見的意外），
+   bets 完全不動。回傳 { paths, marketCount } */
+function restoreConfigPaths(state, baseline, scope){
+  const paths = {};
+  if(!baseline) return { paths, marketCount:0 };
+  const byId = new Map(state.markets.map(m=>[m.id, m]));
+  let n = 0;
+
+  Object.entries(baseline.markets).forEach(([id, cfg])=>{
+    const cur = byId.get(id);
+    const matchNo = cfg.matchNo || null;
+    if(!inScope(scope, matchNo)) return;
+    n++;
+    if(!cur){
+      // 盤口被刪掉了 —— 整包寫回去
+      paths[`markets/${id}`] = Object.assign({}, cfg, { locked:false, settled:false, winnerId:null });
+      return;
+    }
+    BASELINE_FIELDS.forEach(f=>{
+      paths[`markets/${id}/${f}`] = cfg[f] === undefined ? null : cfg[f];
+    });
+    paths[`markets/${id}/locked`]   = false;
+    paths[`markets/${id}/settled`]  = false;
+    paths[`markets/${id}/winnerId`] = null;
+    // 選項整包換掉，這樣多出來或改壞的選項一次清乾淨
+    paths[`markets/${id}/options`]  = cfg.options || {};
+  });
+  return { paths, marketCount:n };
+}
+
+/* 只清注單，不動盤口配置。回傳 { paths, betCount, amount } */
+function clearBetsPaths(state, scope){
+  const byId = new Map(state.markets.map(m=>[m.id, m]));
+  const paths = {};
+  let betCount = 0, amount = 0;
+  state.bets.forEach(b=>{
+    const m = byId.get(b.marketId);
+    // 找不到對應盤口的孤兒注單，只在「全部」時清掉
+    const matchNo = m ? m.matchNo : null;
+    if(!m ? scope !== 'all' : !inScope(scope, matchNo)) return;
+    paths[`bets/${b.id}`] = null;
+    betCount++; amount += b.amount;
+  });
+  return { paths, betCount, amount };
+}
+
+/* 把一整場（或賽前盤）連盤口帶注單整組刪掉 —— 4-5 沒發生時用這個退注 */
+function deleteScopePaths(state, scope){
+  const ids = state.markets.filter(m=>inScope(scope, m.matchNo)).map(m=>m.id);
+  const set = new Set(ids);
+  const paths = {};
+  ids.forEach(id=>{ paths[`markets/${id}`] = null; });
+  let betCount = 0, amount = 0;
+  state.bets.forEach(b=>{
+    if(!set.has(b.marketId)) return;
+    paths[`bets/${b.id}`] = null; betCount++; amount += b.amount;
+  });
+  return { paths, marketCount:ids.length, betCount, amount };
+}
+
+/* 還原範圍的下拉選單內容 */
+function resetScopes(state){
+  const out = [{ value:'all', label:'全部盤口' }];
+  if(state.markets.some(m=>!m.matchNo)) out.push({ value:'pre', label:'賽前盤（沒有賽事編號的盤）' });
+  const seen = [];
+  state.markets.forEach(m=>{ if(m.matchNo && !seen.includes(m.matchNo)) seen.push(m.matchNo); });
+  seen.sort((a,b)=>matchSortKey(a)-matchSortKey(b));
+  seen.forEach(no=>{
+    const ms = state.markets.filter(m=>m.matchNo === no);
+    out.push({ value:no, label:`第 ${no} 場（${ms.length} 個盤）` });
+  });
+  return out;
+}
+
 /* 每人限額 ----------------------------------------------------------
    身分同時比對 bettorId（裝置）與暱稱，任一相符就算同一個人——
    換裝置但用同名字、或同裝置改名字，兩種繞法都會被算進去。
@@ -747,10 +925,10 @@ function isBannedBettor(state, market, name){
    信任制假設一致。
    ------------------------------------------------------------------ */
 function bettorStakeOn(state, marketId, bettorId, name){
-  const nm = String(name || '').trim();
+  const nm = norm(name);
   return state.bets
     .filter(b => b.marketId === marketId &&
-                 (b.bettorId === bettorId || (nm && String(b.name || '').trim() === nm)))
+                 (b.bettorId === bettorId || (nm && sameNickname(b.name, name))))
     .reduce((s,b)=> s + b.amount, 0);
 }
 
@@ -871,6 +1049,9 @@ if(typeof module !== 'undefined' && module.exports){
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
     bettorStakeOn, checkPerBettor, isBannedBettor, playerIndexByName, matchNosOfPlayer,
+    splitNickname, sameNickname,
+    BASELINE_FIELDS, snapshotMarkets, baselineMarkets, baselineDiff, inScope,
+    restoreConfigPaths, clearBetsPaths, deleteScopePaths, resetScopes,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
   };
 }

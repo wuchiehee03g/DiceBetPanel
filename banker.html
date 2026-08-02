@@ -58,8 +58,9 @@ try{
   firebaseReady = true;
 }catch(e){ firebaseReady = false; }
 
-let state = null, pools = {};
+let state = null, pools = {}, raw = null, baseline = null;
 let activeTab = 'markets';
+let resetScope = 'all';
 let timeBucket = 10;
 let newCategory = 'binary';
 let binarySource = 'roster';
@@ -99,7 +100,8 @@ function boot(){
     }
   }).catch(()=>{});
   db.ref(DB_PATH).on('value', s=>{
-    state = normalize(s.val()); pools = buildPools(state);
+    raw = s.val(); baseline = baselineMarkets(raw);
+    state = normalize(raw); pools = buildPools(state);
     setStorageWarning(false); render();
   }, err=>{
     setStorageWarning(true);
@@ -824,13 +826,19 @@ function renderGuideTab(){
             <td class="num">${unnamed === 0 ? '已完成' : `還有 ${unnamed} 位是預設名`}</td></tr>
         <tr><td>${champ && champ.options.some(o=>o.odds !== champ.options[0].odds) ? '✅' : '⚠️'} 冠軍盤依實力差別定價</td>
             <td class="num">${champ ? (champ.options.some(o=>o.odds !== champ.options[0].odds) ? '已分級' : '目前全部同價') : '尚無盤口'}</td></tr>
+        <tr><td>${baseline ? '✅' : '⚠️'} 建立設定基準點</td>
+            <td class="num">${baseline
+              ? new Date(baseline.ts).toLocaleString('zh-TW',{hour12:false})
+              : '尚未建立'}</td></tr>
         <tr><td>${lastExportAt ? '✅' : '⚠️'} 匯出備份</td>
             <td class="num">${lastExportAt ? '本次已匯出' : '尚未匯出'}</td></tr>
         <tr><td>Firebase 規則（選用）</td>
             <td class="num">未發布時所有限制都只是前端檢查</td></tr>
       </tbody>
     </table>
-    <p class="note-line">誤刪盤口與重置賽事<b>無法復原</b>，備份是唯一的後路。</p>
+    <p class="note-line">開賽前先在「設定與備份」按一次<b>建立基準點</b>。
+      之後有人手滑改壞賠率、誤按封盤或結算，用<b>獨立重置 → 還原配置</b>就修得回來，
+      而且注單一筆都不會少。刪掉的盤口與注單則要靠匯出的備份檔。</p>
   </div>`;
 }
 
@@ -857,8 +865,12 @@ function renderSettingsTab(){
           對得上就視為參賽者，擋掉他那個賽事編號底下的三個盤。
           別人的場次與總冠軍盤<b>照常可以下注</b>。<br>
           <b>2. 盤口的莊家不能在自己的盤上下注。</b><br><br>
-          第 1 條靠「暱稱與名單同名」認人，所以<b>請參賽者用真名當暱稱</b>。
-          用別的暱稱就繞得過 —— 這是軟性限制，最終還是靠現場約定。
+          第 1 條靠「暱稱對得上名單」認人，所以<b>請參賽者用真名當暱稱</b>。
+          <b>尾端的選手編號可有可無</b> —— 名單填「小明」，他打「小明7」「小明 7」
+          「小明-7」都認得出來；反過來名單填「小明7」、他只打「小明」也一樣。
+          但編號打成別人的號碼（「小明9」）就不認，寧可放過也不誤鎖。
+          兩位同名選手要靠編號分辨時，名單裡<b>兩個都要帶編號</b>。<br>
+          用完全不同的暱稱還是繞得過 —— 這是軟性限制，最終還是靠現場約定。
         </p>
         ${(function(){
           const rows = state.players.map((p,i)=>({ p, ms: matchNosOfPlayer(state, i) }))
@@ -885,8 +897,122 @@ function renderSettingsTab(){
           <input type="file" id="importFile" accept="application/json" style="display:block;margin-top:6px;">
         </label>
         <button type="button" class="danger-btn" id="resetBtn" style="margin-top:10px;">重置整個賽事</button>
+        <p class="form-hint">全部清空（盤口＋注單＋名單）。日常修復請用下面的獨立重置。</p>
       </div>
     </div>
+  </div>
+  ${renderBaselinePanel()}`;
+}
+
+/* ============================================================
+   獨立重置：有人手滑動到設定時，只修那一塊
+   ============================================================ */
+function renderBaselinePanel(){
+  const scopes = resetScopes(state);
+  if(!scopes.some(s=>s.value === resetScope)) resetScope = 'all';
+  const scopeLabel = (scopes.find(s=>s.value === resetScope) || scopes[0]).label;
+
+  const diff = baselineDiff(state, baseline);
+  const bets = clearBetsPaths(state, resetScope);
+  const cfg  = restoreConfigPaths(state, baseline, resetScope);
+  const inScopeDiff = diff ? diff.filter(r=>inScope(resetScope, r.matchNo)) : null;
+
+  const snapAge = baseline && baseline.ts
+    ? new Date(baseline.ts).toLocaleString('zh-TW', { hour12:false })
+    : null;
+
+  const diffBlock = !baseline
+    ? `<p class="warn-line">還沒有建立基準點。<b>現在按一次「建立基準點」</b>，
+         系統會把目前 ${state.markets.length} 個盤口的配置存起來；
+         之後有人改壞任何一項，就能一鍵還原，而且不動注單。</p>`
+    : inScopeDiff.length === 0
+      ? `<p class="ok-line">✅ ${esc(scopeLabel)}的配置與基準點完全一致，沒有被動過。</p>`
+      : `<p class="warn-line">⚠️ ${esc(scopeLabel)}有 ${inScopeDiff.length} 個盤口與基準點不同：</p>
+         <div class="table-scroll"><table class="ledger">
+           <thead><tr><th>盤口</th><th>差異</th></tr></thead>
+           <tbody>${inScopeDiff.map(r=>`<tr>
+             <td>${r.matchNo ? `第 ${esc(r.matchNo)} 場 · ` : ''}${esc(r.title)}
+                 ${r.kind === 'missing' ? '<br><b style="color:var(--red-bright)">已被刪除</b>' : ''}</td>
+             <td>${r.changes.map(c=>esc(c)).join('<br>')}</td>
+           </tr>`).join('')}</tbody>
+         </table></div>`;
+
+  return `<div class="panel">
+    <h2>獨立重置（有人不小心動到時用這個）</h2>
+    <p class="note-line">
+      這一區的每個動作都<b>各自獨立</b>，不會牽動其他東西。
+      配置與注單分開處理 —— 改壞賠率就只還原賠率，注單一筆都不會少。
+    </p>
+
+    <div class="reset-scope">
+      <label>套用範圍
+        <select id="resetScope">
+          ${scopes.map(s=>`<option value="${esc(s.value)}"${s.value===resetScope?' selected':''}>${esc(s.label)}</option>`).join('')}
+        </select>
+      </label>
+      <span class="form-hint">目前選：<b>${esc(scopeLabel)}</b>
+        範圍內有 <b>${cfg.marketCount}</b> 個盤口、<b>${bets.betCount}</b> 筆注單（$${fmt(bets.amount)}）</span>
+    </div>
+
+    <div class="panel-grid" style="margin-top:14px;">
+      <div class="form-col">
+        <h3>① 基準點</h3>
+        <button type="button" class="danger-btn gold-btn" id="snapBtn">
+          ${baseline ? '更新基準點（用現在的配置）' : '建立基準點'}
+        </button>
+        <p class="form-hint">
+          ${snapAge ? `目前基準點：<b>${esc(snapAge)}</b>，${Object.keys(baseline.markets).length} 個盤口。`
+                    : '尚未建立。'}
+          只存配置（題目、賠率、黏性、各種上限），<b>不存注單、不存封盤與結算狀態</b>。
+          確認配置都正確之後按一次就好；之後刻意改了設定，記得回來更新。
+        </p>
+      </div>
+
+      <div class="form-col">
+        <h3>② 還原配置</h3>
+        <button type="button" class="danger-btn" id="restoreBtn"${baseline?'':' disabled'}>
+          把${esc(scopeLabel)}還原成基準點
+        </button>
+        <p class="form-hint">
+          賠率、黏性、上限、題目全部寫回基準點的值；<b>順手解除封盤與結算</b>
+          （誤按結算是最常見的意外）。<b>注單完全不動</b>，已成交的注單仍然按各自鎖住的
+          成交價計算，所以還原不會偷偷改掉任何人的賠率。
+          被刪掉的盤口也會連同選項一起長回來。
+        </p>
+      </div>
+
+      <div class="form-col">
+        <h3>③ 只清注單</h3>
+        <button type="button" class="danger-btn" id="clearBetsBtn"${bets.betCount?'':' disabled'}>
+          清掉${esc(scopeLabel)}的 ${bets.betCount} 筆注單
+        </button>
+        <p class="form-hint">
+          盤口、賠率、名單、設定全部保留，只把下注紀錄清空。
+          測試完要正式開賽時選「全部盤口」按這個 —— 不必重置整個賽事、不用重開 38 個盤。
+        </p>
+      </div>
+
+      <div class="form-col">
+        <h3>④ 整組刪除（退注）</h3>
+        <button type="button" class="danger-btn" id="dropScopeBtn"${resetScope==='all'?' disabled':''}>
+          刪掉${esc(scopeLabel)}（盤口＋注單）
+        </button>
+        <p class="form-hint">
+          盤口連注單一起消失，等於<b>那些注全額退還</b>。
+          <b>4-4 由勝部冠軍直接拿下、4-5 沒有發生</b>時，選「第 4-5 場」按這個。
+          範圍選「全部盤口」時停用，避免當成整體重置誤按。
+        </p>
+      </div>
+
+      <div class="form-col">
+        <h3>⑤ 只重設玩家名單</h3>
+        <button type="button" class="danger-btn" id="resetPlayersBtn">名單改回「選手1~16」</button>
+        <p class="form-hint">只動 16 個名字，盤口與注單都不受影響。
+          多選項盤的選項標籤跟著名單，所以改名之後那些盤會自動顯示新名字。</p>
+      </div>
+    </div>
+
+    ${diffBlock}
   </div>`;
 }
 
@@ -1017,6 +1143,105 @@ function attachHandlers(){
   if(importFile) importFile.onchange = doImport;
   const resetBtn = document.getElementById('resetBtn');
   if(resetBtn) resetBtn.onclick = doReset;
+
+  const scopeSel = document.getElementById('resetScope');
+  if(scopeSel) scopeSel.onchange = e=>{ resetScope = e.target.value; render(); };
+  const bind = (id, fn)=>{ const el = document.getElementById(id); if(el) el.onclick = fn; };
+  bind('snapBtn',         saveBaseline);
+  bind('restoreBtn',      restoreBaseline);
+  bind('clearBetsBtn',    clearScopeBets);
+  bind('dropScopeBtn',    dropScope);
+  bind('resetPlayersBtn', resetPlayers);
+}
+
+/* ---------- 獨立重置 ----------
+   每個動作都先算好「會動到什麼」再問，確認文字裡寫的是實際數字而不是通則。
+   破壞性的三個（③④⑤）在動手前自動下載一次備份。 */
+async function autoBackup(){
+  if(lastExportAt) return;
+  try{ await doExport(); }catch(e){ /* 備份失敗不阻擋，使用者已經確認過 */ }
+}
+
+async function saveBaseline(){
+  const n = state.markets.length;
+  if(n === 0){ showToast('還沒有盤口，沒有東西可以存'); return; }
+  if(baseline && !confirm(
+      `要用「現在」的配置覆蓋基準點嗎？\n\n` +
+      `舊基準點：${new Date(baseline.ts).toLocaleString('zh-TW',{hour12:false})}\n` +
+      `新基準點：目前的 ${n} 個盤口\n\n` +
+      `如果現在的配置已經被人改壞了，覆蓋之後就還原不回去了。`)) return;
+  try{
+    await db.ref(`${DB_PATH}/baseline`).set({
+      ts: Date.now(), markets: snapshotMarkets(state),
+      players: state.players.slice(), maxBet: state.maxBet
+    });
+    showToast(`基準點已存好（${n} 個盤口）`);
+  }catch(e){ showToast('存基準點失敗：' + String(e).slice(0,60)); }
+}
+
+async function restoreBaseline(){
+  if(!baseline){ showToast('還沒有基準點'); return; }
+  const { paths, marketCount } = restoreConfigPaths(state, baseline, resetScope);
+  if(marketCount === 0){ showToast('這個範圍在基準點裡沒有盤口'); return; }
+  const diff = (baselineDiff(state, baseline) || []).filter(r=>inScope(resetScope, r.matchNo));
+  const locked  = state.markets.filter(m=>inScope(resetScope,m.matchNo) && m.locked).length;
+  const settled = state.markets.filter(m=>inScope(resetScope,m.matchNo) && m.settled).length;
+
+  if(!confirm(
+    `把 ${marketCount} 個盤口的配置還原成基準點：\n\n` +
+    (diff.length ? `· 修正 ${diff.length} 個被改過的盤口\n` : `· 目前沒有偵測到差異（會照樣覆寫一次）\n`) +
+    (locked  ? `· 解除 ${locked} 個封盤\n`  : '') +
+    (settled ? `· 撤銷 ${settled} 個已結算（派彩要自己收回來）\n` : '') +
+    `\n注單不會被動到，一筆都不會少。要繼續嗎？`
+  )) return;
+
+  try{
+    await db.ref(DB_PATH).update(paths);
+    showToast(`已還原 ${marketCount} 個盤口的配置`);
+  }catch(e){ showToast('還原失敗：' + String(e).slice(0,60)); }
+}
+
+async function clearScopeBets(){
+  const { paths, betCount, amount } = clearBetsPaths(state, resetScope);
+  if(betCount === 0){ showToast('這個範圍沒有注單'); return; }
+  const people = new Set(state.bets.filter(b=>paths[`bets/${b.id}`] === null).map(b=>b.name)).size;
+  if(!confirm(
+    `清掉 ${betCount} 筆注單（共 $${fmt(amount)}，${people} 人）。\n\n` +
+    `盤口、賠率、名單、設定都會保留。\n無法復原（會先自動下載備份）。要繼續嗎？`
+  )) return;
+  await autoBackup();
+  try{
+    await db.ref(DB_PATH).update(paths);
+    showToast(`已清掉 ${betCount} 筆注單`);
+  }catch(e){ showToast('清除失敗：' + String(e).slice(0,60)); }
+}
+
+async function dropScope(){
+  if(resetScope === 'all'){ showToast('範圍選「全部盤口」時請用整體重置'); return; }
+  const { paths, marketCount, betCount, amount } = deleteScopePaths(state, resetScope);
+  if(marketCount === 0){ showToast('這個範圍沒有盤口'); return; }
+  if(!confirm(
+    `刪掉 ${marketCount} 個盤口，連同 ${betCount} 筆注單（$${fmt(amount)}）。\n\n` +
+    `注單消失就等於那些注全額退還 —— 這是「這場比賽沒有發生」時的正確處理。\n` +
+    `無法復原（會先自動下載備份）。要繼續嗎？`
+  )) return;
+  await autoBackup();
+  try{
+    await db.ref(DB_PATH).update(paths);
+    showToast(`已刪掉 ${marketCount} 個盤口與 ${betCount} 筆注單`);
+  }catch(e){ showToast('刪除失敗：' + String(e).slice(0,60)); }
+}
+
+async function resetPlayers(){
+  const named = state.players.filter((p,i)=> p !== `選手${i+1}`);
+  if(named.length === 0){ showToast('名單已經是預設值'); return; }
+  if(!confirm(`把 ${named.length} 個改過的名字改回「選手1~16」。\n\n` +
+              `盤口與注單不受影響。要繼續嗎？`)) return;
+  await autoBackup();
+  try{
+    await db.ref(`${DB_PATH}/players`).set(seed().players);
+    showToast('名單已重設');
+  }catch(e){ showToast('重設失敗：' + String(e).slice(0,60)); }
 }
 
 async function openAllDuels(){
@@ -1321,7 +1546,8 @@ function doImport(e){
           maxBet:  parsed.maxBet  || DEFAULT_MAX_BET,
           players: parsed.players || seed().players,
           markets: parsed.markets || null,
-          bets:    parsed.bets    || null
+          bets:    parsed.bets    || null,
+          baseline: parsed.baseline || null
         });
         showToast('備份已還原');
       }
@@ -1341,6 +1567,7 @@ async function doReset(){
     `· ${nBets} 筆注單\n` +
     (named ? `· 已改過的 ${named} 位玩家姓名（會變回「選手1~16」）\n` : '') +
     `· 全域設定（單筆上限、莊家名單）\n\n` +
+    (baseline ? `基準點會保留 —— 重置後可以用「還原配置」把 ${Object.keys(baseline.markets).length} 個盤口長回來。\n\n` : '') +
     `無法復原。確定要繼續嗎？`
   )) return;
 
