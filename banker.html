@@ -289,8 +289,6 @@ function renderMatchPanel(){
     state.players.map((p,i)=>`<option value="${i}"${i===defIdx?' selected':''}>${esc(p)}</option>`).join('')}</select>`;
 
   const bigMin = DEFAULT_BIG_MIN;
-  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs();
-  const O = MATCH_OVERROUND;
 
   return `<div class="panel">
     <h2>開一場單挑賽事（一次建三個盤）</h2>
@@ -335,26 +333,26 @@ function renderMatchPanel(){
 
 // 開盤前先把三個盤的賠率算給莊家看
 function matchOddsPreview(bigMin, items){
-  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs();
-  const O = MATCH_OVERROUND;
-  const S = items ? MATCH_OVERROUND_ITEMS : MATCH_OVERROUND;
+  const bs = bigSmallProbs(bigMin, items), oe = oddEvenProbs(items);
+  const S = SCORE_OVERROUND;
+  const winMargin = (2 / DUEL_WIN_ODDS - 1) * 100;
   const row = (label, p, odds, mode) =>
     `<tr><td>${esc(label)}</td><td class="num">${(p*100).toFixed(1)}%</td>`
     + `<td class="num">${odds.toFixed(2)}x</td><td>${mode}</td></tr>`;
   return `<table class="ledger">
     <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th><th>定價</th></tr></thead>
     <tbody>
-      ${row('誰獲勝（各方）', 0.5, oddsFromProb(0.5, O), '自動調')}
+      ${row('誰獲勝（各方）', 0.5, DUEL_WIN_ODDS, '自動調')}
       ${row('大', bs.big,   oddsFromProb(bs.big,   S), '固定')}
       ${row('小', bs.small, oddsFromProb(bs.small, S), '固定')}
       ${row('單', oe.odd,   oddsFromProb(oe.odd,   S), '固定')}
       ${row('雙', oe.even,  oddsFromProb(oe.even,  S), '固定')}
     </tbody></table>
     <p class="form-hint" style="margin-top:6px;">
-      誰獲勝 +${((O-1)*100).toFixed(0)}% 水、自動調價（強弱要靠錢流修正）<br>
-      大小單雙 +${((S-1)*100).toFixed(0)}% 水、<b>固定賠率</b>（分布是算出來的，錢流不帶資訊，
-      讓它自動調反而會被隨機的錢推歪而虧錢）
-      ${items ? '<br><b>這場有道具卡</b>，血格分布不確定，水錢已從 10% 加厚到 20%' : ''}
+      誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價、自動調價（強弱靠錢流修正），
+      水僅 <b>+${winMargin.toFixed(1)}%</b><br>
+      大小單雙 +${((S-1)*100).toFixed(0)}% 水、<b>固定賠率</b>（分布是算出來的，錢流不帶資訊）
+      ${items ? '<br><b>這場有道具卡</b>，落後方能用卡翻盤讓比賽變近，分布已計入偏向小分' : ''}
     </p>`;
 }
 
@@ -988,8 +986,9 @@ async function createMatch(){
     `建立 ${matchNo}${bm?'　'+bm.name:''}\n` +
     `${state.players[ai]} vs ${state.players[bi]}\n\n` +
     `會開三個盤：誰獲勝、結束比分大/小、結束比分單/雙\n` +
-    `賠率依「雙方實力相當」計算，莊家水錢 +${((MATCH_OVERROUND-1)*100).toFixed(0)}%` +
-    (bm && bm.items ? `\n\n⚠ 這場有道具卡，血格分布會偏移，開完建議自己再調大小／單雙的賠率` : '')
+    `誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價（水 +${((2/DUEL_WIN_ODDS-1)*100).toFixed(1)}%）\n` +
+    `結束比分依真實機率 + ${((SCORE_OVERROUND-1)*100).toFixed(0)}% 抽水` +
+    (bm && bm.items ? `\n\n這場有道具卡，血格分布已計入偏向小分` : '')
   )) return;
 
   try{

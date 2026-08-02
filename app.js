@@ -46,10 +46,21 @@ const DEFAULT_BIG_MIN = 3;
      保留自動調價，但黏性要高，避免被隨機的錢推歪。
    · 總冠軍盤 —— 大家知道上屆前四是誰，錢流帶資訊，維持自動調價。
    -------------------------------------------------------------------- */
-const MATCH_OVERROUND       = 1.10;    // 誰獲勝、以及無道具場次的大小單雙
-const MATCH_OVERROUND_ITEMS = 1.20;    // 有道具卡的場次：血格分布不確定，加厚緩衝
-const DUEL_PRIOR_K          = 100000;  // 誰獲勝的預設黏性（高，抗隨機噪音）
-const DUEL_MAX_LIABILITY    = 10000;   // 每個單挑盤的預設曝險上限
+const MULTI_ODDS         = 12.80;   // 多選項盤（16 人名單）每位選手的起始賠率
+const DUEL_WIN_ODDS      = 1.95;    // 單挑「誰獲勝」雙方的起始賠率
+const SCORE_OVERROUND    = 1.08;    // 結束比分盤的莊家抽水：8%
+const DUEL_PRIOR_K       = 100000;  // 誰獲勝的預設黏性（高，抗隨機噪音）
+const DUEL_MAX_LIABILITY = 10000;   // 每個單挑盤的預設曝險上限
+
+/* 道具卡對血格分布的影響 ----------------------------------------------
+   依規則，道具卡（A 重骰 / K 看牌 / Q 調骰）不是免死金牌，而是**改善那一手
+   的勝率**。落後方在低血時用卡形成翻盤機制 → 比賽變近 → 獲勝者剩血更少，
+   所以分布會往小分偏。這與主辦方的判斷一致。
+
+   ITEM_CARD_Q = 用掉一張卡的那一手，使用者的勝率（0.5 表示卡沒作用）。
+   0.60 是中性估計；實戰跑幾場後可以回頭調這個數字。
+   -------------------------------------------------------------------- */
+const ITEM_CARD_Q = 0.60;
 
 /* 獲勝者剩餘血格的機率分布 ------------------------------------------
    假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
@@ -68,38 +79,74 @@ function hpDistribution(){
   }
   return out.sort((a,b)=>a.hp-b.hp);
 }
-function bigSmallProbs(bigMin){
-  const d = hpDistribution();
+/* 有道具卡時的分布：狀態 (血A, 血B, 卡A, 卡B) 只有 5×5×4×4 = 400 種，
+   直接展開精算，不用模擬。已與 30 萬次蒙地卡羅比對到小數第三位一致。 */
+function hpDistributionItems(q){
+  const Q = (typeof q === 'number' && q > 0 && q < 1) ? q : ITEM_CARD_Q;
+  const memo = new Map();
+  function go(ha, hb, ca, cb){
+    if(ha <= 0) return { [hb]:1 };
+    if(hb <= 0) return { [ha]:1 };
+    const key = `${ha},${hb},${ca},${cb}`;
+    if(memo.has(key)) return memo.get(key);
+    // 落後方在剩 2 格以下且還有卡時使用
+    const behind = ha < hb ? 0 : (hb < ha ? 1 : -1);
+    let user = -1;
+    if(behind === 0 && ha <= 2 && ca > 0) user = 0;
+    if(behind === 1 && hb <= 2 && cb > 0) user = 1;
+    const pA = user === 0 ? Q : (user === 1 ? 1 - Q : 0.5);
+    const na = user === 0 ? ca - 1 : ca;
+    const nb = user === 1 ? cb - 1 : cb;
+    const out = {};
+    const add = (d, w) => { for(const h in d) out[h] = (out[h] || 0) + d[h] * w; };
+    add(go(ha, hb - 1, na, nb), pA);
+    add(go(ha - 1, hb, na, nb), 1 - pA);
+    memo.set(key, out);
+    return out;
+  }
+  const raw = go(MAX_HP, MAX_HP, 3, 3);
+  const out = [];
+  for(let i=1;i<=MAX_HP;i++) out.push({ hp:i, p: raw[i] || 0 });
+  return out;
+}
+
+// items=true 時改用道具版分布
+function hpDist(items){ return items ? hpDistributionItems() : hpDistribution(); }
+
+function bigSmallProbs(bigMin, items){
+  const d = hpDist(items);
   const big = d.filter(x=>x.hp >= bigMin).reduce((s,x)=>s+x.p, 0);
   return { big, small: 1 - big };
 }
-function oddEvenProbs(){
-  const d = hpDistribution();
+function oddEvenProbs(items){
+  const d = hpDist(items);
   const odd = d.filter(x=>x.hp % 2 === 1).reduce((s,x)=>s+x.p, 0);
   return { odd, even: 1 - odd };
 }
 // 由機率換算成含莊家水錢的賠率
 function oddsFromProb(p, overround){
-  const O = (Number(overround) > 0) ? Number(overround) : MATCH_OVERROUND;
+  const O = (Number(overround) > 0) ? Number(overround) : SCORE_OVERROUND;
   if(!(p > 0)) return MAX_AUTO_ODDS;
   return Math.max(1.01, Math.round((1 / (p * O)) * 100) / 100);
 }
 
 const pct = p => (p*100).toFixed(1) + '%';
 
-function bigSmallDesc(bigMin){
+function bigSmallDesc(bigMin, items){
   const big = [], small = [];
   for(let i=1;i<=MAX_HP;i++) (i >= bigMin ? big : small).push(i);
-  const pr = bigSmallProbs(bigMin);
-  return `獲勝者剩餘血格：大 = ${big.join('、')}　小 = ${small.join('、')}`
-       + `（實力相當時 大 ${pct(pr.big)} / 小 ${pct(pr.small)}）`;
+  const pr = bigSmallProbs(bigMin, items);
+  return `獲勝者剩餘血格　盤口 ${bigMin - 0.5}：大 = ${big.join('、')}　小 = ${small.join('、')}`
+       + `（機率 大 ${pct(pr.big)} / 小 ${pct(pr.small)}）`
+       + (items ? '　※ 已計入道具卡讓比賽變近、偏向小分' : '');
 }
-function oddEvenDesc(){
+function oddEvenDesc(items){
   const odd = [], even = [];
   for(let i=1;i<=MAX_HP;i++) (i % 2 ? odd : even).push(i);
-  const pr = oddEvenProbs();
+  const pr = oddEvenProbs(items);
   return `獲勝者剩餘血格：單 = ${odd.join('、')}　雙 = ${even.join('、')}`
-       + `（實力相當時 單 ${pct(pr.odd)} / 雙 ${pct(pr.even)}）`;
+       + `（機率 單 ${pct(pr.odd)} / 雙 ${pct(pr.even)}）`
+       + (items ? '　※ 已計入道具卡的影響' : '');
 }
 
 // 下一個賽事編號：現有數字編號的最大值 + 1
@@ -126,10 +173,9 @@ function buildMatchMarkets(opts){
   const bigMin = (typeof opts.bigMin === 'number' && opts.bigMin >= 2 && opts.bigMin <= MAX_HP)
     ? opts.bigMin : DEFAULT_BIG_MIN;
   const items = !!opts.items;
-  // 誰獲勝用標準水錢；大小單雙在有道具的場次加厚緩衝（血格分布不確定）
-  const overround = (typeof opts.overround === 'number' && opts.overround > 1)
-    ? opts.overround : MATCH_OVERROUND;
-  const scoreOverround = items ? MATCH_OVERROUND_ITEMS : overround;
+  const winOdds = (typeof opts.winOdds === 'number' && opts.winOdds > 1) ? opts.winOdds : DUEL_WIN_ODDS;
+  const scoreOverround = (typeof opts.scoreOverround === 'number' && opts.scoreOverround > 1)
+    ? opts.scoreOverround : SCORE_OVERROUND;
 
   const validIdx = i => Number.isInteger(i) && i >= 0 && i < PLAYER_COUNT;
   if(!matchNo)                    return { error:'缺少賽事編號' };
@@ -141,30 +187,29 @@ function buildMatchMarkets(opts){
     ? opts.maxLiability : DUEL_MAX_LIABILITY;
   const base = { category:'binary', banker, matchNo, maxLiability,
                  locked:false, settled:false, winnerId:null };
-  const bs = bigSmallProbs(bigMin);
-  const oe = oddEvenProbs();
-  const itemNote = items ? '　※ 這場有道具卡，血格分布會偏移，已加厚水錢緩衝' : '';
+  const bs = bigSmallProbs(bigMin, items);
+  const oe = oddEvenProbs(items);
 
   return { markets: [
     // 誰獲勝：我不知道兩人強弱，讓錢流去修正 → 自動調價，高黏性
     { ...base, autoPrice:true, priorK,
-      title:`第 ${matchNo} 場 · 誰獲勝`,
-      desc:`開價假設雙方實力相當（各 50.0%），會依下注情況自動調整`,
+      title:`${matchNo} · 誰獲勝`,
+      desc:`雙方同價開出，會依下注情況自動調整`,
       options: {
-        ['p'+ai]: { order:0, odds: oddsFromProb(0.5, overround) },
-        ['p'+bi]: { order:1, odds: oddsFromProb(0.5, overround) },
+        ['p'+ai]: { order:0, odds: winOdds },
+        ['p'+bi]: { order:1, odds: winOdds },
       }},
     // 大小 / 單雙：分布是算出來的，錢流不帶資訊 → 固定賠率
     { ...base, autoPrice:false, priorK,
-      title:`第 ${matchNo} 場 · 結束比分 大/小`,
-      desc: bigSmallDesc(bigMin) + itemNote,
+      title:`${matchNo} · 結束比分 大/小`,
+      desc: bigSmallDesc(bigMin, items),
       options: {
         [uid()]: { label:'大', order:0, odds: oddsFromProb(bs.big,   scoreOverround) },
         [uid()]: { label:'小', order:1, odds: oddsFromProb(bs.small, scoreOverround) },
       }},
     { ...base, autoPrice:false, priorK,
-      title:`第 ${matchNo} 場 · 結束比分 單/雙`,
-      desc: oddEvenDesc() + itemNote,
+      title:`${matchNo} · 結束比分 單/雙`,
+      desc: oddEvenDesc(items),
       options: {
         [uid()]: { label:'單', order:0, odds: oddsFromProb(oe.odd,  scoreOverround) },
         [uid()]: { label:'雙', order:1, odds: oddsFromProb(oe.even, scoreOverround) },
@@ -720,9 +765,9 @@ if(typeof module !== 'undefined' && module.exports){
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
     PRIZE_SPLIT, BRACKET, SIDE_LABEL, allBracketMatches, bracketMatch, duelMatches,
-    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, MATCH_OVERROUND_ITEMS,
-    DUEL_PRIOR_K, DUEL_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
-    hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
+    MAX_HP, DEFAULT_BIG_MIN, MULTI_ODDS, DUEL_WIN_ODDS, SCORE_OVERROUND,
+    ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
+    hpDistribution, hpDistributionItems, hpDist, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,
