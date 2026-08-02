@@ -323,16 +323,57 @@ header.board-header.banker{border-bottom-color:var(--blue);}
 .gold-btn{border-color:var(--gold);color:var(--gold-bright);}
 .gold-btn:hover{background:rgba(201,162,39,0.15);}
 
+/* ---------- 分類區塊 ---------- */
+.grp{margin-bottom:18px;}
+.grp-head{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;
+  user-select:none;-webkit-user-select:none;
+  border-bottom:2px solid var(--gold);padding-bottom:8px;margin-bottom:12px;
+}
+.grp-head:hover h2{color:var(--gold-bright);}
+.grp-head h2{
+  font-family:'Oswald','Noto Sans TC',sans-serif;font-size:17px;margin:0;letter-spacing:0.5px;
+}
+.grp-meta{
+  margin-left:auto;font-size:11.5px;color:var(--ivory-dim);
+  font-family:'JetBrains Mono',monospace;white-space:nowrap;
+}
+.grp.closed .grp-head{border-bottom-color:var(--line);margin-bottom:0;}
+
+/* ---------- 場次框 ---------- */
+.mbox{
+  border:1px solid var(--line);border-left:3px solid var(--blue);
+  border-radius:7px;margin-bottom:12px;overflow:hidden;
+  background:rgba(0,0,0,0.15);
+}
+.mbox.done{border-left-color:var(--gold);opacity:0.72;}
+.mbox-head{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;cursor:pointer;
+  user-select:none;-webkit-user-select:none;padding:11px 13px;
+  background:rgba(122,162,247,0.08);
+}
+.mbox-head:hover .mbox-name{color:var(--blue-bright);}
+.mbox-no{
+  font-family:'JetBrains Mono',monospace;font-size:15px;font-weight:700;color:var(--blue-bright);
+}
+.mbox-name{font-size:13px;font-weight:500;}
+.mbox-meta{
+  margin-left:auto;font-size:11px;color:var(--ivory-dim);
+  font-family:'JetBrains Mono',monospace;white-space:nowrap;
+}
+.mbox-meta .mine{color:var(--gold-bright);}
+.mbox-body{padding:10px 12px 4px;}
+.mbox-from{
+  font-size:11px;color:var(--ivory-dim);margin-bottom:8px;
+  border-left:2px solid var(--line);padding-left:8px;
+}
+.mbox-body .market-card{
+  background:rgba(0,0,0,0.2);border-left-width:1px;padding:12px 13px;margin-bottom:9px;
+}
+.mbox-body .market-card::before{display:none;}
+.mbox-body .market-head h2{font-size:14px;}
+
 /* ---------- 盤口收放 ---------- */
-.fold-bar{
-  display:flex;align-items:center;justify-content:space-between;gap:10px;
-  margin-bottom:10px;font-size:11.5px;color:var(--ivory-dim);
-}
-.fold-bar button{
-  background:transparent;border:1px solid var(--line);color:var(--ivory-dim);
-  border-radius:14px;padding:6px 14px;font-size:11.5px;cursor:pointer;min-height:34px;
-}
-.fold-bar button:hover{border-color:var(--gold);color:var(--gold-bright);}
 .fold-head{cursor:pointer;user-select:none;-webkit-user-select:none;}
 .fold-head:hover h2{color:var(--gold-bright);}
 .fold-arrow{

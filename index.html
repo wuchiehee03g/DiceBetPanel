@@ -86,17 +86,21 @@ function loadFolded(){
 function saveFolded(){
   try{ localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); }catch(e){}
 }
-// 使用者沒表態過的盤，依選項數決定預設
-function isFolded(market){
-  if(folded.has(market.id)) return true;
-  if(folded.has('!' + market.id)) return false;      // '!id' 表示使用者明確展開過
-  return market.options.length > FOLD_DEFAULT_OVER;
+/* 任意 key 的收放狀態。'!key' 表示使用者明確展開過，用來和預設值區分，
+   這樣遠端資料更新重繪時不會把使用者打開的東西收回去。 */
+function foldedKey(key, dflt){
+  if(folded.has(key)) return true;
+  if(folded.has('!' + key)) return false;
+  return dflt;
 }
-function toggleFold(market){
-  if(isFolded(market)){ folded.delete(market.id); folded.add('!' + market.id); }
-  else { folded.delete('!' + market.id); folded.add(market.id); }
+function toggleKey(key, dflt){
+  if(foldedKey(key, dflt)){ folded.delete(key); folded.add('!' + key); }
+  else { folded.delete('!' + key); folded.add(key); }
   saveFolded();
 }
+// 盤口：選項多的預設收起
+function isFolded(market){ return foldedKey(market.id, market.options.length > FOLD_DEFAULT_OVER); }
+function toggleFold(market){ toggleKey(market.id, market.options.length > FOLD_DEFAULT_OVER); }
 
 function showToast(msg){
   const t = document.getElementById('toast');
@@ -120,8 +124,7 @@ function boot(){
   // 舊版用同一個 key 存過 'main'/'prop'，直接沿用會比對不到任何盤口、
   // 畫面一片空白且沒有分頁反白。所以存進來的值一定要驗證。
   const savedTab = localStorage.getItem(TAB_KEY);
-  activeTab = (CATEGORY_KEYS.includes(savedTab) || savedTab === 'mine' || savedTab === 'bracket')
-    ? savedTab : 'multi';
+  activeTab = ['bet','mine','bracket'].includes(savedTab) ? savedTab : 'bet';
   document.getElementById('meName').value = me.name;
 
   if(!firebaseReady){
@@ -209,13 +212,12 @@ function renderSummary(){
 
 function renderTabs(){
   const mineCount = state.bets.filter(b=>b.bettorId === me.id).length;
-  const groups = CATEGORIES.map(c=>({
-    key:c.key,
-    label:`${c.label}${state.markets.filter(m=>m.category===c.key && !m.settled).length
-      ? ' ('+state.markets.filter(m=>m.category===c.key && !m.settled).length+')' : ''}`
-  }));
-  groups.push({ key:'mine', label:`我的下注${mineCount?' ('+mineCount+')':''}` });
-  groups.push({ key:'bracket', label:'賽制' });
+  const openCount = state.markets.filter(m=>!m.settled && !m.locked).length;
+  const groups = [
+    { key:'bet',     label:`投注${openCount ? ' ('+openCount+')' : ''}` },
+    { key:'mine',    label:`我的下注${mineCount ? ' ('+mineCount+')' : ''}` },
+    { key:'bracket', label:'賽制' },
+  ];
   const tabs = document.getElementById('tabs');
   tabs.innerHTML = groups.map(g=>
     `<button class="tab-btn ${activeTab===g.key?'active':''}" data-tab="${g.key}">${esc(g.label)}</button>`
@@ -233,27 +235,65 @@ function renderBody(){
   const list = document.getElementById('marketList');
   if(activeTab === 'bracket'){ list.innerHTML = renderBracket(); return; }
   if(activeTab === 'mine'){ list.innerHTML = renderMyBets(); return; }
-  const markets = state.markets.filter(m => m.category === activeTab);
-  if(markets.length === 0){
-    list.innerHTML = `<div class="empty-note">這個分類目前沒有盤口。<br>等莊家開盤後就會出現在這裡。</div>`;
+
+  const groups = playerGroups(state);
+  if(groups.length === 0){
+    list.innerHTML = `<div class="empty-note">目前沒有任何盤口。<br>等莊家開盤後就會出現在這裡。</div>`;
     return;
   }
-  const anyOpen = markets.some(m=>!isFolded(m));
-  list.innerHTML = `
-    <div class="fold-bar">
-      <span>${markets.length} 個盤口</span>
-      <button type="button" id="foldAllBtn">${anyOpen ? '全部收起' : '全部展開'}</button>
-    </div>`
-    + markets.map(renderMarketCard).join('');
-  const fa = document.getElementById('foldAllBtn');
-  if(fa) fa.onclick = ()=>{
-    markets.forEach(m=>{
-      if(anyOpen){ folded.delete('!' + m.id); folded.add(m.id); }
-      else { folded.delete(m.id); folded.add('!' + m.id); }
-    });
-    saveFolded(); render();
-  };
+  list.innerHTML = groups.map(renderGroup).join('');
   attachHandlers();
+}
+
+// 分類區塊（賽前盤 / 第三階段 / 第四階段）
+function renderGroup(g){
+  const key = 'cat:' + g.key;
+  const open = !foldedKey(key, false);        // 分類預設展開
+  const count = g.kind === 'markets' ? g.markets.length : g.matches.length;
+  const unit  = g.kind === 'markets' ? '個盤口' : '場';
+  const staked = (g.kind === 'markets' ? g.markets : g.matches.flatMap(m=>m.markets))
+    .reduce((s,m)=> s + marketTotal(pools, m), 0);
+
+  return `<section class="grp ${open?'':'closed'}">
+    <div class="grp-head" data-foldkey="${key}">
+      <span class="fold-arrow">${open?'▾':'▸'}</span>
+      <h2>${esc(g.label)}</h2>
+      <span class="grp-meta">${count} ${unit}${staked ? `　·　注金 $${fmt(staked)}` : ''}</span>
+    </div>
+    ${open ? `<div class="grp-body">${
+      g.kind === 'markets'
+        ? g.markets.map(renderMarketCard).join('')
+        : g.matches.map(renderMatchBox).join('')
+    }</div>` : ''}
+  </section>`;
+}
+
+// 同一場次的三個盤收在一個框裡
+function renderMatchBox(mb){
+  const key = 'match:' + mb.matchNo;
+  const open = !foldedKey(key, false);        // 場次預設展開
+  const staked = mb.markets.reduce((s,m)=> s + marketTotal(pools, m), 0);
+  const mine = state.bets
+    .filter(b => b.bettorId === me.id && mb.markets.some(m=>m.id === b.marketId))
+    .reduce((s,b)=> s + b.amount, 0);
+  const allSettled = mb.markets.every(m=>m.settled);
+  const anyLocked  = mb.markets.some(m=>m.locked && !m.settled);
+  const bm = mb.bracket;
+
+  return `<div class="mbox ${open?'':'closed'} ${allSettled?'done':''}">
+    <div class="mbox-head" data-foldkey="${key}">
+      <span class="fold-arrow">${open?'▾':'▸'}</span>
+      <span class="mbox-no">${esc(mb.matchNo)}</span>
+      <span class="mbox-name">${esc(bm ? bm.name : '')}</span>
+      ${allSettled?'<span class="chip done">已結束</span>':(anyLocked?'<span class="chip lock">封盤</span>':'')}
+      <span class="mbox-meta">${mb.markets.length} 個盤${staked?`　·　$${fmt(staked)}`:''}${
+        mine?`　·　<span class="mine">我押 $${fmt(mine)}</span>`:''}</span>
+    </div>
+    ${open ? `<div class="mbox-body">
+      ${bm ? `<div class="mbox-from">${esc(bm.from)}</div>` : ''}
+      ${mb.markets.map(renderMarketCard).join('')}
+    </div>` : ''}
+  </div>`;
 }
 
 function renderMarketCard(market){
@@ -313,7 +353,7 @@ function renderMarketCard(market){
   return `
     <div class="market-card ${market.settled?'settled':''} ${(!market.settled&&market.locked)?'locked':''} ${fold?'folded':''}">
       <div class="market-head fold-head" data-fold="${market.id}">
-        <h2><span class="fold-arrow">${fold?'▸':'▾'}</span>${esc(market.title)}${market.matchNo?`<span class="chip match">${esc(market.matchNo)}</span>`:''}<span class="chip cat">${esc(categoryLabel(market.category))}</span>${
+        <h2><span class="fold-arrow">${fold?'▸':'▾'}</span>${esc(market.matchNo ? market.title.replace(/^\S+\s*·\s*/, '') : market.title)}${
           market.settled?'<span class="chip done">已結算</span>':(market.locked?'<span class="chip lock">封盤</span>':'')}</h2>
         <div class="market-pool-badge">總注金 $${fmt(total)}${
           myTotal ? `<br><span class="mine">我押 $${fmt(myTotal)}</span>` : ''}</div>
@@ -473,6 +513,9 @@ function attachHandlers(){
       const m = state.markets.find(x=>x.id === head.dataset.fold);
       if(m){ toggleFold(m); render(); }
     };
+  });
+  document.querySelectorAll('[data-foldkey]').forEach(head=>{
+    head.onclick = ()=>{ toggleKey(head.dataset.foldkey, false); render(); };
   });
   document.querySelectorAll('[data-bet-amt]').forEach(inp=>{
     inp.oninput = ()=>{ draftAmounts[inp.dataset.betAmt] = inp.value; };

@@ -50,7 +50,11 @@ const MULTI_ODDS         = 12.80;   // 多選項盤（16 人名單）每位選�
 const DUEL_WIN_ODDS      = 1.95;    // 單挑「誰獲勝」雙方的起始賠率
 const SCORE_OVERROUND    = 1.08;    // 結束比分盤的莊家抽水：8%
 const DUEL_PRIOR_K       = 100000;  // 誰獲勝的預設黏性（高，抗隨機噪音）
-const DUEL_MAX_LIABILITY = 30000;   // 每個單挑盤每個選項的賠付上限
+const DUEL_MAX_LIABILITY = 500000;  // 單挑盤每個選項的賠付上限
+const MULTI_PRIOR_K      = 300000;  // 賽前盤（16 選項）的定價黏性
+const MULTI_MAX_LIABILITY= 500000;  // 賽前盤每個選項的賠付上限
+                                    // 註：黏性拉高後價格幾乎不動，每個人製造的曝險一樣大，
+                                    // 上限必須跟著拉高，否則第 2 個押同一位選手的人就被擋。
 
 /* 道具卡對血格分布的影響 ----------------------------------------------
    依規則，道具卡（A 重骰 / K 看牌 / Q 調骰）不是免死金牌，而是**改善那一手
@@ -132,21 +136,18 @@ function oddsFromProb(p, overround){
 
 const pct = p => (p*100).toFixed(1) + '%';
 
-function bigSmallDesc(bigMin, items){
+/* 盤口說明給玩家看，只寫規則不寫機率 ——
+   真實機率是莊家的定價依據，公開等於把自己的底牌掀給對手看。
+   莊家後台會另外即時算出來顯示。 */
+function bigSmallDesc(bigMin){
   const big = [], small = [];
   for(let i=1;i<=MAX_HP;i++) (i >= bigMin ? big : small).push(i);
-  const pr = bigSmallProbs(bigMin, items);
-  return `獲勝者剩餘血格　盤口 ${bigMin - 0.5}：大 = ${big.join('、')}　小 = ${small.join('、')}`
-       + `（機率 大 ${pct(pr.big)} / 小 ${pct(pr.small)}）`
-       + (items ? '　※ 已計入道具卡讓比賽變近、偏向小分' : '');
+  return `獲勝者剩餘血格　盤口 ${bigMin - 0.5}：大 = ${big.join('、')}　小 = ${small.join('、')}`;
 }
-function oddEvenDesc(items){
+function oddEvenDesc(){
   const odd = [], even = [];
   for(let i=1;i<=MAX_HP;i++) (i % 2 ? odd : even).push(i);
-  const pr = oddEvenProbs(items);
-  return `獲勝者剩餘血格：單 = ${odd.join('、')}　雙 = ${even.join('、')}`
-       + `（機率 單 ${pct(pr.odd)} / 雙 ${pct(pr.even)}）`
-       + (items ? '　※ 已計入道具卡的影響' : '');
+  return `獲勝者剩餘血格：單 = ${odd.join('、')}　雙 = ${even.join('、')}`;
 }
 
 // 下一個賽事編號：現有數字編號的最大值 + 1
@@ -202,14 +203,14 @@ function buildMatchMarkets(opts){
     // 大小 / 單雙：分布是算出來的，錢流不帶資訊 → 固定賠率
     { ...base, autoPrice:false, priorK,
       title:`${matchNo} · 結束比分 大/小`,
-      desc: bigSmallDesc(bigMin, items),
+      desc: bigSmallDesc(bigMin),
       options: {
         [uid()]: { label:'大', order:0, odds: oddsFromProb(bs.big,   scoreOverround) },
         [uid()]: { label:'小', order:1, odds: oddsFromProb(bs.small, scoreOverround) },
       }},
     { ...base, autoPrice:false, priorK,
       title:`${matchNo} · 結束比分 單/雙`,
-      desc: oddEvenDesc(items),
+      desc: oddEvenDesc(),
       options: {
         [uid()]: { label:'單', order:0, odds: oddsFromProb(oe.odd,  scoreOverround) },
         [uid()]: { label:'雙', order:1, odds: oddsFromProb(oe.even, scoreOverround) },
@@ -335,11 +336,17 @@ function seed(){
   return { schema:3, maxBet:DEFAULT_MAX_BET, players };
 }
 
-// 賽事編號的排序鍵：數字就照數字比，非數字排在數字之後，沒編號的排最後
+/* 賽事編號的排序鍵。第二屆的編號是「階段-場次」格式（1-1、3-5、4-10），
+   直接 Number("4-1") 會得到 NaN，導致同階段的場次全部排序鍵相同、
+   只能靠建立順序排（4-4 會跑到 4-1 前面）。所以要拆開比。 */
 function matchSortKey(matchNo){
   if(matchNo == null) return Number.MAX_SAFE_INTEGER;
-  const n = Number(matchNo);
-  return Number.isFinite(n) ? n : Number.MAX_SAFE_INTEGER - 1;
+  const s = String(matchNo).trim();
+  const m = /^(\d+)-(\d+)$/.exec(s);
+  if(m) return Number(m[1]) * 1000 + Number(m[2]);
+  const n = Number(s);
+  if(Number.isFinite(n)) return n;
+  return Number.MAX_SAFE_INTEGER - 1;   // 非數字編號排在數字之後
 }
 
 /* ---------- 正規化 ----------
@@ -397,6 +404,48 @@ function normalize(raw){
   const maxBet = (typeof raw.maxBet === 'number' && raw.maxBet > 0) ? raw.maxBet : DEFAULT_MAX_BET;
 
   return { schema: raw.schema || 3, maxBet, players, markets, bets };
+}
+
+/* 玩家頁的分類 --------------------------------------------------------
+   不用「多選項／雙選項」這種實作術語，改用玩家看得懂的賽事語言。
+   同一場次的三個盤（誰獲勝、大小、單雙）收在一起。
+   -------------------------------------------------------------------- */
+function playerGroups(state){
+  const pre = state.markets.filter(m => !m.matchNo);
+  const byStage = (prefix) => {
+    const map = new Map();
+    state.markets
+      .filter(m => m.matchNo && m.matchNo.startsWith(prefix))
+      .forEach(m => {
+        if(!map.has(m.matchNo)) map.set(m.matchNo, []);
+        map.get(m.matchNo).push(m);
+      });
+    return [...map.entries()]
+      .sort((a,b)=> matchSortKey(a[0]) - matchSortKey(b[0]))
+      .map(([matchNo, markets]) => ({ matchNo, markets, bracket: bracketMatch(matchNo) }));
+  };
+  const s3 = byStage('3-');
+  const s4 = byStage('4-');
+  const usedNos = new Set([...s3, ...s4].map(g=>g.matchNo));
+  const otherMatches = (()=>{
+    const map = new Map();
+    state.markets
+      .filter(m => m.matchNo && !usedNos.has(m.matchNo))
+      .forEach(m => {
+        if(!map.has(m.matchNo)) map.set(m.matchNo, []);
+        map.get(m.matchNo).push(m);
+      });
+    return [...map.entries()]
+      .sort((a,b)=> matchSortKey(a[0]) - matchSortKey(b[0]))
+      .map(([matchNo, markets]) => ({ matchNo, markets, bracket: bracketMatch(matchNo) }));
+  })();
+
+  const out = [];
+  if(pre.length) out.push({ key:'pre', label:'賽前盤', kind:'markets', markets:pre });
+  if(s3.length)  out.push({ key:'s3',  label:'單挑盤（第三階段 · 無道具卡）', kind:'matches', matches:s3 });
+  if(s4.length)  out.push({ key:'s4',  label:'單挑盤（第四階段 · 有道具卡）', kind:'matches', matches:s4 });
+  if(otherMatches.length) out.push({ key:'other', label:'其他場次', kind:'matches', matches:otherMatches });
+  return out;
 }
 
 /* ---------- 池額索引 ---------- */
@@ -766,7 +815,8 @@ if(typeof module !== 'undefined' && module.exports){
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
     PRIZE_SPLIT, BRACKET, SIDE_LABEL, allBracketMatches, bracketMatch, duelMatches,
     MAX_HP, DEFAULT_BIG_MIN, MULTI_ODDS, DUEL_WIN_ODDS, SCORE_OVERROUND,
-    ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
+    ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, MULTI_PRIOR_K, MULTI_MAX_LIABILITY,
+    playerGroups, bigSmallDesc, oddEvenDesc,
     hpDistribution, hpDistributionItems, hpDist, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
