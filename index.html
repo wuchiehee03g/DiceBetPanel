@@ -93,7 +93,8 @@ function boot(){
   // 舊版用同一個 key 存過 'main'/'prop'，直接沿用會比對不到任何盤口、
   // 畫面一片空白且沒有分頁反白。所以存進來的值一定要驗證。
   const savedTab = localStorage.getItem(TAB_KEY);
-  activeTab = (CATEGORY_KEYS.includes(savedTab) || savedTab === 'mine') ? savedTab : 'multi';
+  activeTab = (CATEGORY_KEYS.includes(savedTab) || savedTab === 'mine' || savedTab === 'bracket')
+    ? savedTab : 'multi';
   document.getElementById('meName').value = me.name;
 
   if(!firebaseReady){
@@ -187,6 +188,7 @@ function renderTabs(){
       ? ' ('+state.markets.filter(m=>m.category===c.key && !m.settled).length+')' : ''}`
   }));
   groups.push({ key:'mine', label:`我的下注${mineCount?' ('+mineCount+')':''}` });
+  groups.push({ key:'bracket', label:'賽制' });
   const tabs = document.getElementById('tabs');
   tabs.innerHTML = groups.map(g=>
     `<button class="tab-btn ${activeTab===g.key?'active':''}" data-tab="${g.key}">${esc(g.label)}</button>`
@@ -202,6 +204,7 @@ function renderTabs(){
 
 function renderBody(){
   const list = document.getElementById('marketList');
+  if(activeTab === 'bracket'){ list.innerHTML = renderBracket(); return; }
   if(activeTab === 'mine'){ list.innerHTML = renderMyBets(); return; }
   const markets = state.markets.filter(m => m.category === activeTab);
   if(markets.length === 0){
@@ -335,6 +338,82 @@ function renderMyBets(){
       <div class="table-scroll"><table class="ledger">
         <thead><tr><th>盤口</th><th>選項</th><th class="num">鎖定賠率</th><th class="num">下注</th><th>狀態</th><th class="num">淨利</th></tr></thead>
         <tbody>${rows}</tbody></table></div>
+    </div>`;
+}
+
+/* ---------- 賽制 ----------
+   雙敗淘汰：勝部輸一次掉到敗部還有機會，敗部再輸就淘汰。
+   每個場次卡上都標出「人從哪來、贏了去哪、輸了去哪」。 */
+function renderBracket(){
+  const openMatchNos = new Set(state.markets.filter(m=>m.matchNo && !m.settled).map(m=>m.matchNo));
+  const settledNos   = new Set(state.markets.filter(m=>m.matchNo && m.settled).map(m=>m.matchNo));
+
+  const card = (m)=>{
+    const live = openMatchNos.has(m.id);
+    const done = settledNos.has(m.id);
+    return `<div class="bk-match ${m.side==='W'?'w':m.side==='L'?'l':'f'} ${live?'live':''} ${done?'done':''}">
+      <div class="bk-id">${esc(m.id)}${m.items?'<span class="bk-item">道具</span>':''}${
+        live?'<span class="bk-live">開盤中</span>':(done?'<span class="bk-done">已結束</span>':'')}</div>
+      <div class="bk-name">${esc(m.name)}</div>
+      <div class="bk-flow"><span class="bk-lbl">誰上桌</span>${esc(m.from)}</div>
+      <div class="bk-flow up"><span class="bk-lbl">贏</span>${esc(m.win)}</div>
+      <div class="bk-flow down"><span class="bk-lbl">輸</span>${esc(m.lose)}</div>
+    </div>`;
+  };
+
+  const stages = BRACKET.map(s=>{
+    const W = s.matches.filter(m=>m.side==='W');
+    const L = s.matches.filter(m=>m.side==='L');
+    const F = s.matches.filter(m=>m.side==='F');
+    const lane = (label, ms, cls)=> ms.length ? `
+      <div class="bk-lane ${cls}">
+        <div class="bk-lane-head">${label}</div>
+        ${ms.map(card).join('')}
+      </div>` : '';
+    return `<div class="market-card bk-stage">
+      <div class="market-head"><h2>${esc(s.title)}</h2>
+        <div class="market-pool-badge">${s.matches.length} 場</div></div>
+      <div class="bk-note">${esc(s.note)}</div>
+      <div class="bk-lanes">
+        ${lane('勝部', W, 'w')}
+        ${lane('敗部', L, 'l')}
+        ${lane('總決賽', F, 'f')}
+      </div>
+      <div class="bk-after">階段結束後：${esc(s.after)}</div>
+    </div>`;
+  }).join('');
+
+  const duels = duelMatches();
+  return `
+    <div class="market-card">
+      <div class="market-head"><h2>第二屆 · 雙敗淘汰賽制</h2>
+        <div class="market-pool-badge">共 ${allBracketMatches().length} 場</div></div>
+      <div class="bk-intro">
+        <b>雙敗淘汰</b>：在勝部輸一次會掉到敗部，還有一次機會；在敗部再輸就永久淘汰。
+        所以每個人都有兩條命，一路從勝部打上去的人到最後有優勢。
+        <div class="bk-prize">
+          <span>冠軍 ${Math.round(PRIZE_SPLIT.first*100)}%</span>
+          <span>亞軍 ${Math.round(PRIZE_SPLIT.second*100)}%</span>
+          <span>季軍 ${Math.round(PRIZE_SPLIT.third*100)}%</span>
+        </div>
+        <div class="bk-legend">
+          <span class="bk-key w"></span>勝部
+          <span class="bk-key l"></span>敗部
+          <span class="bk-key f"></span>總決賽
+          <span class="bk-key live"></span>目前開盤中
+        </div>
+      </div>
+    </div>
+    ${stages}
+    <div class="market-card">
+      <div class="market-head"><h2>關於投注</h2></div>
+      <div class="bk-note" style="border:none;padding-left:0;">
+        <b>四人桌（1-1 ~ 2-4）</b>取前 2 名晉級，沒有單一獲勝者，所以不開「結束比分」盤。<br>
+        <b>單挑場次（共 ${duels.length} 場）</b>才有「誰獲勝」與「結束比分 大/小、單/雙」可以押。
+        比分指<b>獲勝者剩餘血格</b>（每輪五格、歸零淘汰，所以是 1~5）。<br>
+        <b>第四階段有道具卡</b>（重骰、看牌、調骰），會影響血格分布，賠率會另外調整。<br>
+        <b>總冠軍盤</b>從賽前就開放，一路押到冠軍出爐。
+      </div>
     </div>`;
 }
 

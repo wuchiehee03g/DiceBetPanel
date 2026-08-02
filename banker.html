@@ -269,9 +269,18 @@ function pendingOptionCount(){
   return n >= 2 ? n : 2;
 }
 
+function matchPickInfo(id){
+  const bm = bracketMatch(id);
+  if(!bm) return '';
+  return `<b>${esc(bm.name)}</b>（${esc(SIDE_LABEL[bm.side])}）<br>`
+    + `誰上桌：${esc(bm.from)}<br>`
+    + `贏 → ${esc(bm.win)}<br>輸 → ${esc(bm.lose)}`
+    + (bm.items ? '<br><b>⚠ 這場有道具卡</b>，血格分布會偏移，大小／單雙的賠率建議自己再調' : '');
+}
+
 function renderMatchPanel(){
-  const no = nextMatchNo(state);
   const used = [...new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo))];
+  const firstOpen = duelMatches().find(m=>!used.includes(m.id));
   const bigOpts = [];
   for(let i=2;i<=MAX_HP;i++){
     bigOpts.push(`<option value="${i}" ${i===DEFAULT_BIG_MIN?'selected':''}>${i} 格以上為大</option>`);
@@ -287,9 +296,14 @@ function renderMatchPanel(){
     <h2>開一場單挑賽事（一次建三個盤）</h2>
     <div class="panel-grid">
       <div class="form-col">
-        <h3>賽事編號</h3>
-        <div class="auto-no">第 <b id="matchNoShow">${no}</b> 場<span>自動編號</span></div>
-        ${used.length ? `<p class="form-hint">已開過：${used.map(esc).join('、')}</p>` : ''}
+        <h3>選賽事場次</h3>
+        <select data-match-pick="1" id="matchPick">
+          ${duelMatches().map(m=>{
+            const done = used.includes(m.id);
+            return `<option value="${m.id}"${done?' disabled':''}>${esc(m.id)}　${esc(m.name)}${done?'（已開過）':''}</option>`;
+          }).join('')}
+        </select>
+        <p class="form-hint" id="matchPickInfo"></p>
         <h3 style="margin-top:14px;">參賽玩家</h3>
         ${sel('matchA', 0)}
         ${sel('matchB', 1)}
@@ -816,8 +830,13 @@ function attachHandlers(){
   // 調整黏性（或選項數）時即時更新體感提示
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
   if(mk && mi) mk.oninput = ()=>{ mi.innerHTML = impactHint(parseFloat(mk.value), 2); };
-  const bm = document.getElementById('matchBigMin'), op = document.getElementById('matchOddsPreview');
-  if(bm && op) bm.onchange = ()=>{ op.innerHTML = matchOddsPreview(parseInt(bm.value, 10)); };
+  const bmSel = document.getElementById('matchBigMin'), op = document.getElementById('matchOddsPreview');
+  if(bmSel && op) bmSel.onchange = ()=>{ op.innerHTML = matchOddsPreview(parseInt(bmSel.value, 10)); };
+  const pick = document.getElementById('matchPick'), pickInfo = document.getElementById('matchPickInfo');
+  if(pick && pickInfo){
+    const upd = ()=>{ pickInfo.innerHTML = matchPickInfo(pick.value); };
+    pick.onchange = upd; upd();
+  }
   const nk = document.getElementById('newPriorK'), ni = document.getElementById('createImpact');
   const refreshCreateImpact = ()=>{
     if(ni) ni.innerHTML = impactHint(parseFloat(nk ? nk.value : DEFAULT_PRIOR_K), pendingOptionCount());
@@ -912,7 +931,7 @@ function attachHandlers(){
 }
 
 async function createMatch(){
-  const matchNo = String(nextMatchNo(state));
+  const matchNo = document.getElementById('matchPick').value;
   const ai = parseInt(document.getElementById('matchA').value, 10);
   const bi = parseInt(document.getElementById('matchB').value, 10);
   const built = buildMatchMarkets({
@@ -929,10 +948,13 @@ async function createMatch(){
   });
   if(built.error){ showToast(built.error); return; }
 
+  const bm = bracketMatch(matchNo);
   if(!confirm(
-    `建立第 ${matchNo} 場：${state.players[ai]} vs ${state.players[bi]}\n\n` +
+    `建立 ${matchNo}${bm?'　'+bm.name:''}\n` +
+    `${state.players[ai]} vs ${state.players[bi]}\n\n` +
     `會開三個盤：誰獲勝、結束比分大/小、結束比分單/雙\n` +
-    `賠率依「雙方實力相當」計算，莊家水錢 +${((MATCH_OVERROUND-1)*100).toFixed(0)}%`
+    `賠率依「雙方實力相當」計算，莊家水錢 +${((MATCH_OVERROUND-1)*100).toFixed(0)}%` +
+    (bm && bm.items ? `\n\n⚠ 這場有道具卡，血格分布會偏移，開完建議自己再調大小／單雙的賠率` : '')
   )) return;
 
   try{

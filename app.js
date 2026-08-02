@@ -150,6 +150,95 @@ function buildMatchMarkets(opts){
   ]};
 }
 
+/* ============================================================
+   第二屆賽制：雙敗淘汰，21 場
+   ------------------------------------------------------------
+   編號沿用主辦方的格式（1-1、3-5、4-4…），開盤時直接從這裡挑，
+   賽事編號才會跟看板一致。
+
+   format 'table4' = 四人桌（取前 2 晉級）
+   format 'duel'   = 單挑 1v1
+   items  true     = 有道具卡（會改變獲勝者剩餘血格的分布）
+   ============================================================ */
+const PRIZE_SPLIT = { first:0.60, second:0.30, third:0.10 };
+
+const BRACKET = [
+  { stage:1, title:'第一階段 · 常規四人桌', note:'可跳抓，跳抓時輸贏加倍；喊牌較上家大於兩顆時可選擇迴轉。',
+    matches:[
+      { id:'1-1', side:'W', name:'勝部 A 桌', format:'table4', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
+      { id:'1-2', side:'W', name:'勝部 B 桌', format:'table4', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
+      { id:'1-3', side:'W', name:'勝部 C 桌', format:'table4', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
+      { id:'1-4', side:'W', name:'勝部 D 桌', format:'table4', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
+      { id:'1-5', side:'L', name:'敗部 A 桌', format:'table4', from:'1-1、1-2 的敗者',
+        win:'前 2 復活', lose:'後 2 永久淘汰' },
+      { id:'1-6', side:'L', name:'敗部 B 桌', format:'table4', from:'1-3、1-4 的敗者',
+        win:'前 2 復活', lose:'後 2 永久淘汰' },
+    ],
+    after:'勝部 8 人、敗部生還 4 人' },
+
+  { stage:2, title:'第二階段 · 反向揭露四人桌', note:'看得到別人的骰子、看不到自己的；不可跳抓；每次最多加喊上家 +2 顆（喊飛不限）。',
+    matches:[
+      { id:'2-1', side:'W', name:'勝部 8 強 A 桌', format:'table4', from:'第一階段勝部晉級者',
+        win:'前 2 晉級勝部第三階段', lose:'後 2 掉入敗部' },
+      { id:'2-2', side:'W', name:'勝部 8 強 B 桌', format:'table4', from:'第一階段勝部晉級者',
+        win:'前 2 晉級勝部第三階段', lose:'後 2 掉入敗部' },
+      { id:'2-3', side:'L', name:'敗部反向 A 桌', format:'table4', from:'勝部掉下的 4 人 + 敗部生還的 4 人',
+        win:'前 2 復活', lose:'後 2 永久淘汰' },
+      { id:'2-4', side:'L', name:'敗部反向 B 桌', format:'table4', from:'勝部掉下的 4 人 + 敗部生還的 4 人',
+        win:'前 2 復活', lose:'後 2 永久淘汰' },
+    ],
+    after:'勝部 4 人、敗部生還 4 人' },
+
+  { stage:3, title:'第三階段 · 單挑無道具桌', note:'可喊哉；含 1 的天牌算六顆、不含 1 的天牌算七顆。無道具卡。',
+    matches:[
+      { id:'3-1', side:'W', name:'勝部 4 強單挑 A', format:'duel', from:'第二階段勝部晉級者',
+        win:'晉級勝部決賽 4-1', lose:'掉入敗部' },
+      { id:'3-2', side:'W', name:'勝部 4 強單挑 B', format:'duel', from:'第二階段勝部晉級者',
+        win:'晉級勝部決賽 4-1', lose:'掉入敗部' },
+      { id:'3-3', side:'L', name:'敗部單挑 A（自相殘殺）', format:'duel', from:'2-3、2-4 生還者',
+        win:'晉級 3-5', lose:'永久淘汰' },
+      { id:'3-4', side:'L', name:'敗部單挑 B（自相殘殺）', format:'duel', from:'2-3、2-4 生還者',
+        win:'晉級 3-6', lose:'永久淘汰' },
+      { id:'3-5', side:'L', name:'敗部單挑 C（迎戰降級者）', format:'duel', from:'3-1 敗者 vs 3-3 勝者',
+        win:'晉級 4-2', lose:'永久淘汰' },
+      { id:'3-6', side:'L', name:'敗部單挑 D（迎戰降級者）', format:'duel', from:'3-2 敗者 vs 3-4 勝者',
+        win:'晉級 4-2', lose:'永久淘汰' },
+    ],
+    after:'勝部 2 人、敗部生還 2 人' },
+
+  { stage:4, title:'第四階段 · 單挑道具桌', note:'每人三張道具卡（A 重骰 / K 看牌 / Q 調骰），各限用一次，同一手牌只能用一張。',
+    matches:[
+      { id:'4-1', side:'W', name:'勝部冠軍戰', format:'duel', items:true, from:'3-1、3-2 勝者',
+        win:'直接晉級總冠軍賽 4-4', lose:'掉入敗部，爭奪季軍 4-3' },
+      { id:'4-2', side:'L', name:'敗部準決賽（泡沫戰）', format:'duel', items:true, from:'3-5、3-6 勝者',
+        win:'保底前三名，進入錢圈', lose:'第四名 —— 最後一個無法進錢圈的泡沫' },
+      { id:'4-3', side:'L', name:'季軍戰', format:'duel', items:true, from:'4-1 敗者 vs 4-2 勝者',
+        win:'敗部冠軍，晉級總冠軍賽', lose:'季軍，獲得獎池 10%' },
+      { id:'4-4', side:'F', name:'總冠軍戰 第一場', format:'duel', items:true, from:'勝部冠軍 vs 敗部冠軍',
+        win:'勝部冠軍贏 → 比賽結束奪冠', lose:'敗部冠軍贏 → 進入 Bracket Reset，打 4-5' },
+      { id:'4-5', side:'F', name:'總冠軍戰 第二場（Bracket Reset）', format:'duel', items:true,
+        from:'僅在 4-4 由敗部冠軍獲勝時舉行',
+        win:'勝者即為總冠軍', lose:'敗者為亞軍' },
+    ],
+    after:'冠軍 60% / 亞軍 30% / 季軍 10%' },
+];
+
+const SIDE_LABEL = { W:'勝部', L:'敗部', F:'總決賽' };
+
+// 攤平成一維，方便查找
+function allBracketMatches(){
+  return BRACKET.flatMap(s => s.matches.map(m => ({ ...m, stage:s.stage, stageTitle:s.title })));
+}
+function bracketMatch(id){
+  return allBracketMatches().find(m => m.id === id) || null;
+}
+// 只有單挑場次適用「獲勝者剩餘血格」的大小／單雙盤
+function duelMatches(){ return allBracketMatches().filter(m => m.format === 'duel'); }
+
 const CATEGORIES = [
   { key:'multi',   label:'多選項', hint:'從 16 人名單選，例如誰奪冠、誰最先淘汰' },
   { key:'binary',  label:'雙選項', hint:'兩個選項，例如單挑誰贏、單雙、大小' },
@@ -608,6 +697,7 @@ if(typeof module !== 'undefined' && module.exports){
     DB_PATH, PLAYER_COUNT, DEFAULT_ODDS, DEFAULT_PRIOR_K, DEFAULT_MAX_BET,
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
+    PRIZE_SPLIT, BRACKET, SIDE_LABEL, allBracketMatches, bracketMatch, duelMatches,
     MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, bigSmallDesc, oddEvenDesc,
     hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
