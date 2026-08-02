@@ -155,11 +155,13 @@ function renderOpenWarning(){
     return;
   }
   const rows = [...groups.entries()].map(([key, ms])=>{
-    const label = key === '__other__' ? '不屬於任何場次（例如總冠軍盤）' : `第 ${esc(key)} 場`;
+    const pre = key === '__other__';
+    const label = pre ? '賽前盤（冠軍、亞軍、季軍、Bubble、敗部冠軍）' : `${esc(key)}`;
     return `<div class="ow-group">
       <div class="ow-g-head">${label}　<span>${ms.length} 個盤</span></div>
       <div class="ow-list">${ms.map(m=>esc(m.title)).join('　·　')}</div>
-      <button type="button" data-lock-group="${esc(key)}">封盤這${key === '__other__' ? '些' : '一場'}（${ms.length} 個）</button>
+      ${pre ? '<div class="ow-note" style="margin-bottom:6px;">這些在賽事開打前一次封盤，之後只等結算。</div>' : ''}
+      <button type="button" data-lock-group="${esc(key)}">${pre ? `封盤全部賽前盤（${ms.length} 個）` : `封盤 ${esc(key)}（${ms.length} 個）`}</button>
     </div>`;
   }).join('');
 
@@ -177,7 +179,7 @@ function renderOpenWarning(){
 async function lockGroup(key){
   const ms = openGroups().get(key) || [];
   if(ms.length === 0) return;
-  const label = key === '__other__' ? '不屬於任何場次的盤口' : `第 ${key} 場`;
+  const label = key === '__other__' ? '賽前盤' : key;
   if(!confirm(`確定封盤${label}的這 ${ms.length} 個盤？\n\n${ms.map(m=>'· '+m.title).join('\n')}\n\n封盤後玩家無法再下注，之後可以個別重新開盤。`)) return;
   const updates = {};
   ms.forEach(m=>{ updates[`markets/${m.id}/locked`] = true; });
@@ -672,11 +674,22 @@ function renderGuideTab(){
   <div class="panel guide">
     <h2>① 每場比賽的操作順序</h2>
     <ol>
-      <li>開盤（單挑賽事一鍵建三個盤）→ 大家下注</li>
-      <li><b>比賽開始前，用頁面頂端的警示區「封盤這一場」</b> —— 只封那一場，其他場次繼續收注</li>
-      <li>比賽結束、公布結果 → 在該盤選正確結果 → 結算並派彩</li>
+      <li><b>賽事開打前</b>：用頂端警示區的「封盤全部賽前盤」把五個多選項盤一次封掉
+        （最後總冠軍、總亞軍、總季軍、Bubble Guy、敗部冠軍）</li>
+      <li>每場單挑開盤（一鍵建三個盤）→ 大家下注</li>
+      <li><b>那場比賽開始前，封掉那一場</b> —— 只封那一場，其他還沒打的場次繼續收注</li>
+      <li>比賽結束、公布結果 → 選正確結果 → 結算並派彩</li>
       <li>結算錯了按「撤銷結算」，注單全部保留，可以改判</li>
     </ol>
+    <p>賽前盤的結算時機不同，各自等對應的比賽打完：</p>
+    <table class="ledger">
+      <thead><tr><th>賽前盤</th><th>什麼時候可以結算</th></tr></thead>
+      <tbody>
+        <tr><td>Bubble Guy</td><td>4-2 敗部準決賽結束（敗者即第四名）</td></tr>
+        <tr><td>總季軍 / 敗部冠軍</td><td>4-3 季軍戰結束（敗者季軍、勝者敗部冠軍）</td></tr>
+        <tr><td>最後總冠軍 / 總亞軍</td><td>4-4 結束；若 Bracket Reset 則等 4-5</td></tr>
+      </tbody>
+    </table>
     <p class="warn-line">忘記封盤是最容易真的賠錢的失誤 —— 現場看得到結果的人還能下注，賠率鎖定救不了你。</p>
   </div>
 
