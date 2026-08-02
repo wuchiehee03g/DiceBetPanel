@@ -312,16 +312,16 @@ function renderMatchPanel(){
       <div class="form-col">
         <h3>莊家與定價</h3>
         <input data-match-banker="1" id="matchBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
-        <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="1000"
-               value="${DEFAULT_PRIOR_K}" placeholder="定價黏性">
+        <input data-match-prior-k="1" id="matchPriorK" type="number" min="100" step="10000"
+               value="${DUEL_PRIOR_K}" placeholder="誰獲勝的定價黏性">
         <input data-match-liab="1" id="matchLiab" type="number" min="0" step="1000"
-               value="" placeholder="單選項曝險上限（留空＝不限制）">
+               value="${DUEL_MAX_LIABILITY}" placeholder="單選項曝險上限">
         <select id="matchBigMin">${bigOpts.join('')}</select>
-        <p class="form-hint" id="matchImpact">${impactHint(DEFAULT_PRIOR_K, 2)}</p>
+        <p class="form-hint" id="matchImpact">${impactHint(DUEL_PRIOR_K, 2)}</p>
       </div>
       <div class="form-col">
         <h3>會建立這三個盤（賠率已依機率算好）</h3>
-        <div class="odds-preview" id="matchOddsPreview">${matchOddsPreview(bigMin)}</div>
+        <div class="odds-preview" id="matchOddsPreview">${matchOddsPreview(bigMin, firstOpen && firstOpen.items)}</div>
         <p class="form-hint">
           比分指<b>獲勝者剩餘血格</b>。血量五格、歸零淘汰，所以「險勝」比「完勝」
           常見得多 —— 剩 1 格的機率是剩 5 格的 4.4 倍，大小與單雙<b>本來就不是五五波</b>。
@@ -334,20 +334,28 @@ function renderMatchPanel(){
 }
 
 // 開盤前先把三個盤的賠率算給莊家看
-function matchOddsPreview(bigMin){
-  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs(), O = MATCH_OVERROUND;
-  const row = (label, p, odds) =>
-    `<tr><td>${esc(label)}</td><td class="num">${(p*100).toFixed(1)}%</td><td class="num">${odds.toFixed(2)}x</td></tr>`;
+function matchOddsPreview(bigMin, items){
+  const bs = bigSmallProbs(bigMin), oe = oddEvenProbs();
+  const O = MATCH_OVERROUND;
+  const S = items ? MATCH_OVERROUND_ITEMS : MATCH_OVERROUND;
+  const row = (label, p, odds, mode) =>
+    `<tr><td>${esc(label)}</td><td class="num">${(p*100).toFixed(1)}%</td>`
+    + `<td class="num">${odds.toFixed(2)}x</td><td>${mode}</td></tr>`;
   return `<table class="ledger">
-    <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th></tr></thead>
+    <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th><th>定價</th></tr></thead>
     <tbody>
-      ${row('誰獲勝（各方）', 0.5, oddsFromProb(0.5, O))}
-      ${row('大', bs.big,   oddsFromProb(bs.big,   O))}
-      ${row('小', bs.small, oddsFromProb(bs.small, O))}
-      ${row('單', oe.odd,   oddsFromProb(oe.odd,   O))}
-      ${row('雙', oe.even,  oddsFromProb(oe.even,  O))}
+      ${row('誰獲勝（各方）', 0.5, oddsFromProb(0.5, O), '自動調')}
+      ${row('大', bs.big,   oddsFromProb(bs.big,   S), '固定')}
+      ${row('小', bs.small, oddsFromProb(bs.small, S), '固定')}
+      ${row('單', oe.odd,   oddsFromProb(oe.odd,   S), '固定')}
+      ${row('雙', oe.even,  oddsFromProb(oe.even,  S), '固定')}
     </tbody></table>
-    <p class="form-hint" style="margin-top:6px;">莊家水錢 +${((O-1)*100).toFixed(0)}%</p>`;
+    <p class="form-hint" style="margin-top:6px;">
+      誰獲勝 +${((O-1)*100).toFixed(0)}% 水、自動調價（強弱要靠錢流修正）<br>
+      大小單雙 +${((S-1)*100).toFixed(0)}% 水、<b>固定賠率</b>（分布是算出來的，錢流不帶資訊，
+      讓它自動調反而會被隨機的錢推歪而虧錢）
+      ${items ? '<br><b>這場有道具卡</b>，血格分布不確定，水錢已從 10% 加厚到 20%' : ''}
+    </p>`;
 }
 
 function renderCreatePanel(){
@@ -702,11 +710,31 @@ function renderGuideTab(){
     <table class="ledger">
       <thead><tr><th>黏性</th><th>效果</th></tr></thead>
       <tbody>
-        <tr><td>小</td><td>價格劇烈跳動，<b>但你受保護</b>（後面的人拿不到高賠率）</td></tr>
-        <tr><td>大</td><td>價格穩定、早晚下注較公平，<b>但你曝險更大</b></td></tr>
+        <tr><td>小</td><td>價格劇烈跳動。錢<b>帶有資訊</b>時保護你（快速反應），錢是<b>隨機噪音</b>時害你</td></tr>
+        <tr><td>大</td><td>價格穩定。錢是隨機噪音時保護你，錢帶有資訊時反應太慢</td></tr>
       </tbody>
     </table>
     <p class="note-line">抽水率<b>不影響</b>遞減速度，只決定起始價高低。兩件獨立的事。</p>
+  </div>
+
+  <div class="panel guide">
+    <h2>④ 為什麼大小／單雙是固定賠率</h2>
+    <p><b>自動調價把「錢流」當成「資訊」。</b>有人押 A，系統就認為 A 比較可能贏，
+      於是把 B 的賠率調高。這在錢帶有資訊時是好事，但如果那筆錢只是隨機的，
+      B 的賠率就被推到<b>公平值以上</b> —— 押 B 的人拿到正期望，你吃虧。</p>
+    <p>實測：真實 50/50 的盤，兩邊各押一筆 $5,000、黏性 20,000，莊家期望是 <b>−400</b>。</p>
+    <table class="ledger">
+      <thead><tr><th>盤別</th><th>錢帶資訊嗎</th><th>定價方式</th></tr></thead>
+      <tbody>
+        <tr><td>大小 / 單雙</td><td>❌ 血格分布是算出來的，沒人比公式更懂</td><td><b>固定賠率</b></td></tr>
+        <tr><td>誰獲勝</td><td>⚠️ 大家知道誰比較強</td><td>自動調價，高黏性</td></tr>
+        <tr><td>總冠軍</td><td>✅ 大家知道上屆前四是誰</td><td>自動調價</td></tr>
+      </tbody>
+    </table>
+    <p class="warn-line">所以<b>不要把大小／單雙盤改成自動調價</b>。模擬顯示整屆賽事的期望收益
+      會從約 +90,000 掉到 +45,000，而且 5% 分位會從 +11,800 變成 −33,540。</p>
+    <p class="note-line">第四階段有道具卡，血格分布不確定，所以那 5 場的大小／單雙水錢
+      從 10% 加厚到 <b>20%</b> 當緩衝。</p>
   </div>
 
   <div class="panel guide">
@@ -831,11 +859,17 @@ function attachHandlers(){
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
   if(mk && mi) mk.oninput = ()=>{ mi.innerHTML = impactHint(parseFloat(mk.value), 2); };
   const bmSel = document.getElementById('matchBigMin'), op = document.getElementById('matchOddsPreview');
-  if(bmSel && op) bmSel.onchange = ()=>{ op.innerHTML = matchOddsPreview(parseInt(bmSel.value, 10)); };
   const pick = document.getElementById('matchPick'), pickInfo = document.getElementById('matchPickInfo');
+  const refreshPreview = ()=>{
+    if(!op) return;
+    const items = !!((pick && bracketMatch(pick.value)) || {}).items;
+    op.innerHTML = matchOddsPreview(bmSel ? parseInt(bmSel.value,10) : DEFAULT_BIG_MIN, items);
+  };
+  if(bmSel) bmSel.onchange = refreshPreview;
   if(pick && pickInfo){
-    const upd = ()=>{ pickInfo.innerHTML = matchPickInfo(pick.value); };
-    pick.onchange = upd; upd();
+    pick.onchange = ()=>{ pickInfo.innerHTML = matchPickInfo(pick.value); refreshPreview(); };
+    pickInfo.innerHTML = matchPickInfo(pick.value);
+    refreshPreview();
   }
   const nk = document.getElementById('newPriorK'), ni = document.getElementById('createImpact');
   const refreshCreateImpact = ()=>{
@@ -939,11 +973,12 @@ async function createMatch(){
     playerAIndex: ai,
     playerBIndex: bi,
     banker:  document.getElementById('matchBanker').value,
-    priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DEFAULT_PRIOR_K)),
+    priorK:  Math.max(100, Math.round(parseFloat(document.getElementById('matchPriorK').value) || DUEL_PRIOR_K)),
     bigMin:  parseInt(document.getElementById('matchBigMin').value, 10),
+    items:   !!(bracketMatch(matchNo) || {}).items,
     maxLiability: (function(){
       const v = document.getElementById('matchLiab').value.trim();
-      return v === '' ? null : Math.max(0, Math.round(parseFloat(v)));
+      return v === '' ? undefined : Math.max(0, Math.round(parseFloat(v)));
     })(),
   });
   if(built.error){ showToast(built.error); return; }

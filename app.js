@@ -31,7 +31,25 @@ const DICE_PIPS      = ['⚀','⚁','⚂','⚃','⚄','⚅'];
    -------------------------------------------------------------------- */
 const MAX_HP = 5;
 const DEFAULT_BIG_MIN = 3;
-const MATCH_OVERROUND = 1.10;   // 單挑盤的預設莊家水錢：+10%
+/* 單挑盤的定價策略 ----------------------------------------------------
+   關鍵認知：自動調價把「錢流」當成「資訊」。錢帶有資訊時它保護莊家，
+   錢只是隨機噪音時它反而害莊家——因為它會把冷門那邊的賠率推到公平值以上。
+
+   實測：真實 50/50 的盤，兩邊各押一筆 $5,000、黏性 20,000，
+   莊家期望是 −400。黏性拉到 200,000 才變成 +625。
+
+   所以依「錢有沒有資訊」分開處理：
+
+   · 大小 / 單雙 —— 血格分布是從賽制算出來的，沒有人比公式更懂，
+     錢流不帶資訊。用固定賠率（關掉自動調價），莊家穩拿開價時的水。
+   · 誰獲勝 —— 我不知道兩位選手的相對強弱，但下注的人知道，錢流帶資訊。
+     保留自動調價，但黏性要高，避免被隨機的錢推歪。
+   · 總冠軍盤 —— 大家知道上屆前四是誰，錢流帶資訊，維持自動調價。
+   -------------------------------------------------------------------- */
+const MATCH_OVERROUND       = 1.10;    // 誰獲勝、以及無道具場次的大小單雙
+const MATCH_OVERROUND_ITEMS = 1.20;    // 有道具卡的場次：血格分布不確定，加厚緩衝
+const DUEL_PRIOR_K          = 100000;  // 誰獲勝的預設黏性（高，抗隨機噪音）
+const DUEL_MAX_LIABILITY    = 10000;   // 每個單挑盤的預設曝險上限
 
 /* 獲勝者剩餘血格的機率分布 ------------------------------------------
    假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
@@ -104,11 +122,14 @@ function buildMatchMarkets(opts){
   const ai = Number(opts.playerAIndex);
   const bi = Number(opts.playerBIndex);
   const banker = String(opts.banker || '').trim();
-  const priorK = (typeof opts.priorK === 'number' && opts.priorK > 0) ? opts.priorK : DEFAULT_PRIOR_K;
+  const priorK = (typeof opts.priorK === 'number' && opts.priorK > 0) ? opts.priorK : DUEL_PRIOR_K;
   const bigMin = (typeof opts.bigMin === 'number' && opts.bigMin >= 2 && opts.bigMin <= MAX_HP)
     ? opts.bigMin : DEFAULT_BIG_MIN;
+  const items = !!opts.items;
+  // 誰獲勝用標準水錢；大小單雙在有道具的場次加厚緩衝（血格分布不確定）
   const overround = (typeof opts.overround === 'number' && opts.overround > 1)
     ? opts.overround : MATCH_OVERROUND;
+  const scoreOverround = items ? MATCH_OVERROUND_ITEMS : overround;
 
   const validIdx = i => Number.isInteger(i) && i >= 0 && i < PLAYER_COUNT;
   if(!matchNo)                    return { error:'缺少賽事編號' };
@@ -116,36 +137,37 @@ function buildMatchMarkets(opts){
   if(ai === bi)                   return { error:'兩位參賽玩家不能相同' };
   if(!banker)                     return { error:'請輸入莊家名字' };
 
-  // 曝險上限預設不設（單挑盤只有兩個選項、賠率低，自我保護已經夠）
   const maxLiability = (typeof opts.maxLiability === 'number' && opts.maxLiability > 0)
-    ? opts.maxLiability : null;
-  const base = { category:'binary', banker, matchNo, autoPrice:true, priorK,
-                 ...(maxLiability ? { maxLiability } : {}),
+    ? opts.maxLiability : DUEL_MAX_LIABILITY;
+  const base = { category:'binary', banker, matchNo, maxLiability,
                  locked:false, settled:false, winnerId:null };
   const bs = bigSmallProbs(bigMin);
   const oe = oddEvenProbs();
+  const itemNote = items ? '　※ 這場有道具卡，血格分布會偏移，已加厚水錢緩衝' : '';
 
   return { markets: [
-    { ...base,
+    // 誰獲勝：我不知道兩人強弱，讓錢流去修正 → 自動調價，高黏性
+    { ...base, autoPrice:true, priorK,
       title:`第 ${matchNo} 場 · 誰獲勝`,
-      desc:`假設雙方實力相當（各 50.0%）`,
+      desc:`開價假設雙方實力相當（各 50.0%），會依下注情況自動調整`,
       options: {
         ['p'+ai]: { order:0, odds: oddsFromProb(0.5, overround) },
         ['p'+bi]: { order:1, odds: oddsFromProb(0.5, overround) },
       }},
-    { ...base,
+    // 大小 / 單雙：分布是算出來的，錢流不帶資訊 → 固定賠率
+    { ...base, autoPrice:false, priorK,
       title:`第 ${matchNo} 場 · 結束比分 大/小`,
-      desc: bigSmallDesc(bigMin),
+      desc: bigSmallDesc(bigMin) + itemNote,
       options: {
-        [uid()]: { label:'大', order:0, odds: oddsFromProb(bs.big,   overround) },
-        [uid()]: { label:'小', order:1, odds: oddsFromProb(bs.small, overround) },
+        [uid()]: { label:'大', order:0, odds: oddsFromProb(bs.big,   scoreOverround) },
+        [uid()]: { label:'小', order:1, odds: oddsFromProb(bs.small, scoreOverround) },
       }},
-    { ...base,
+    { ...base, autoPrice:false, priorK,
       title:`第 ${matchNo} 場 · 結束比分 單/雙`,
-      desc: oddEvenDesc(),
+      desc: oddEvenDesc() + itemNote,
       options: {
-        [uid()]: { label:'單', order:0, odds: oddsFromProb(oe.odd,  overround) },
-        [uid()]: { label:'雙', order:1, odds: oddsFromProb(oe.even, overround) },
+        [uid()]: { label:'單', order:0, odds: oddsFromProb(oe.odd,  scoreOverround) },
+        [uid()]: { label:'雙', order:1, odds: oddsFromProb(oe.even, scoreOverround) },
       }},
   ]};
 }
@@ -698,7 +720,8 @@ if(typeof module !== 'undefined' && module.exports){
     MAX_AUTO_ODDS, MIN_AUTO_ODDS, QUICK_AMOUNTS, DICE_PIPS,
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
     PRIZE_SPLIT, BRACKET, SIDE_LABEL, allBracketMatches, bracketMatch, duelMatches,
-    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, bigSmallDesc, oddEvenDesc,
+    MAX_HP, DEFAULT_BIG_MIN, MATCH_OVERROUND, MATCH_OVERROUND_ITEMS,
+    DUEL_PRIOR_K, DUEL_MAX_LIABILITY, bigSmallDesc, oddEvenDesc,
     hpDistribution, bigSmallProbs, oddEvenProbs, oddsFromProb,
     buildMatchMarkets, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
