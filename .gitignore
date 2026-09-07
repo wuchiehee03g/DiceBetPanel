@@ -11,3 +11,13 @@ Thumbs.db
 
 # macOS
 .DS_Store
+
+# 賽果備份與報表含參與者暱稱與下注金額，repo 是公開的，不進版控
+最終賽果-*.json
+最終賽果報表-*.csv
+賽果備份-*.json
+賽果報表-*.csv
+備份-*.json
+
+# 舊版原型
+骰俠吹牛王-投注站.html.html
