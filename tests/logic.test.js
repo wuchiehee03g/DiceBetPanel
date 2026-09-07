@@ -376,6 +376,51 @@ const seed = A.seed();
 ok(seed.players[0] === '選手1' && seed.players[15] === '選手16', '種子名單 選手1~16');
 ok(seed.maxBet === 5000 && seed.schema === 3, '種子全域設定');
 
+/* ============================================================
+   13. 資料庫規則檔
+   ============================================================ */
+section('資料庫規則');
+const fs = require('fs');
+const path = require('path');
+const rulesDoc = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'database.rules.json'), 'utf8'));
+const rules = rulesDoc.rules;
+
+ok(Object.keys(rulesDoc).join() === 'rules', '頂層只有 rules（多一個鍵 Firebase 就拒收）');
+ok(rules['.read'] === false && rules['.write'] === false, '根層級預設拒絕');
+ok(!/now\s*[<>]/.test(JSON.stringify(rules)), '★ 不含 now < 時間戳（測試模式規則會 30 天後鎖死）');
+
+const nodes = Object.keys(rules).filter(k => !k.startsWith('.'));
+ok(nodes.includes(A.DB_PATH), `規則涵蓋目前的節點 ${A.DB_PATH}`);
+ok(nodes.includes(A.DB_PATH + '_TEST'), '規則涵蓋 e2e 用的測試節點');
+
+// ★ 每個節點的規則只能引用自己 —— 換屆時忘了改就會全部注單被擋
+nodes.forEach(node=>{
+  const refs = [...new Set(
+    (JSON.stringify(rules[node]).match(/root\.child\('([A-Za-z0-9_]+)\//g) || [])
+      .map(x => x.replace(/root\.child\('|\/$/g, ''))
+  )];
+  const wrong = refs.filter(r => r !== node);
+  ok(wrong.length === 0, `★ ${node} 的規則只引用自己（誤引用：${wrong.join() || '無'}）`);
+});
+
+// 舊屆必須是唯讀封存
+const archived = nodes.filter(n => n !== A.DB_PATH && !n.endsWith('_TEST'));
+archived.forEach(n=>{
+  ok(rules[n]['.write'] === false, `${n}（往屆）設為唯讀`);
+  ok(rules[n]['.read'] === true, `${n}（往屆）仍可讀`);
+});
+
+// 使用中的節點該有的分支
+['schema','maxBet','players','markets','bets','baseline'].forEach(br=>{
+  ok(br in rules[A.DB_PATH], `${A.DB_PATH} 有 ${br} 分支`);
+});
+ok(rules[A.DB_PATH].$other && rules[A.DB_PATH].$other['.validate'] === false,
+   '未列出的分支一律拒絕');
+// 測試節點必須與正式節點同一套驗證，否則 e2e 測不到規則
+ok(JSON.stringify(rules[A.DB_PATH + '_TEST']).replace(/_TEST/g, '') ===
+   JSON.stringify(rules[A.DB_PATH]),
+   '★ 測試節點套用與正式節點相同的驗證規則');
+
 console.log(`\n${'='.repeat(52)}`);
 console.log(`通過 ${pass} 項，失敗 ${fail} 項`);
 console.log('='.repeat(52));

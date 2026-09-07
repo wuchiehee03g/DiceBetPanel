@@ -83,7 +83,7 @@
       "bets": {
         ".write": true,
         "$bid": {
-          ".validate": "!newData.exists() || (newData.hasChildren(['marketId','optionId','name','amount','ts']) && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).exists() && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('locked').val() != true && root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('settled').val() != true && newData.child('amount').isNumber() && newData.child('amount').val() > 0 && newData.child('amount').val() <= (root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('maxBet').exists() ? root.child('diceLiarKingState/markets').child(newData.child('marketId').val()).child('maxBet').val() : root.child('diceLiarKingState/maxBet').val()))",
+          ".validate": "!newData.exists() || (newData.hasChildren(['marketId','optionId','name','amount','ts']) && root.child('diceLiarKingState3/markets').child(newData.child('marketId').val()).exists() && root.child('diceLiarKingState3/markets').child(newData.child('marketId').val()).child('locked').val() != true && root.child('diceLiarKingState3/markets').child(newData.child('marketId').val()).child('settled').val() != true && newData.child('amount').isNumber() && newData.child('amount').val() > 0 && newData.child('amount').val() <= (root.child('diceLiarKingState3/markets').child(newData.child('marketId').val()).child('maxBet').exists() ? root.child('diceLiarKingState3/markets').child(newData.child('marketId').val()).child('maxBet').val() : root.child('diceLiarKingState3/maxBet').val()))",
           "marketId": {
             ".validate": "newData.isString()"
           },
@@ -125,7 +125,120 @@
     },
     "diceLiarKingState3_TEST": {
       ".read": true,
-      ".write": true
+      "schema": {
+        ".write": true,
+        ".validate": "newData.isNumber()"
+      },
+      "maxBet": {
+        ".write": true,
+        ".validate": "newData.isNumber() && newData.val() > 0 && newData.val() <= 1000000"
+      },
+      "players": {
+        ".write": true,
+        "$i": {
+          ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+        }
+      },
+      "markets": {
+        ".write": true,
+        "$mid": {
+          ".validate": "!newData.exists() || newData.hasChildren(['title'])",
+          "title": {
+            ".validate": "newData.isString() && newData.val().length <= 80"
+          },
+          "desc": {
+            ".validate": "newData.isString() && newData.val().length <= 200"
+          },
+          "banker": {
+            ".validate": "newData.isString() && newData.val().length <= 20"
+          },
+          "category": {
+            ".validate": "newData.val() == 'multi' || newData.val() == 'binary' || newData.val() == 'special'"
+          },
+          "matchNo": {
+            ".validate": "newData.isString() && newData.val().length <= 12"
+          },
+          "locked": {
+            ".validate": "newData.isBoolean()"
+          },
+          "settled": {
+            ".validate": "newData.isBoolean()"
+          },
+          "autoPrice": {
+            ".validate": "newData.isBoolean()"
+          },
+          "order": {
+            ".validate": "newData.isNumber()"
+          },
+          "priorK": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "maxBet": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "maxPerBettor": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "maxLiability": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "options": {
+            "$oid": {
+              "label": {
+                ".validate": "newData.isString() && newData.val().length <= 30"
+              },
+              "order": {
+                ".validate": "newData.isNumber()"
+              },
+              "odds": {
+                ".validate": "newData.isNumber() && newData.val() > 1 && newData.val() <= 50"
+              }
+            }
+          }
+        }
+      },
+      "bets": {
+        ".write": true,
+        "$bid": {
+          ".validate": "!newData.exists() || (newData.hasChildren(['marketId','optionId','name','amount','ts']) && root.child('diceLiarKingState3_TEST/markets').child(newData.child('marketId').val()).exists() && root.child('diceLiarKingState3_TEST/markets').child(newData.child('marketId').val()).child('locked').val() != true && root.child('diceLiarKingState3_TEST/markets').child(newData.child('marketId').val()).child('settled').val() != true && newData.child('amount').isNumber() && newData.child('amount').val() > 0 && newData.child('amount').val() <= (root.child('diceLiarKingState3_TEST/markets').child(newData.child('marketId').val()).child('maxBet').exists() ? root.child('diceLiarKingState3_TEST/markets').child(newData.child('marketId').val()).child('maxBet').val() : root.child('diceLiarKingState3_TEST/maxBet').val()))",
+          "marketId": {
+            ".validate": "newData.isString()"
+          },
+          "optionId": {
+            ".validate": "newData.isString()"
+          },
+          "name": {
+            ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 20"
+          },
+          "bettorId": {
+            ".validate": "newData.isString() && newData.val().length <= 32"
+          },
+          "amount": {
+            ".validate": "newData.isNumber() && newData.val() > 0"
+          },
+          "ts": {
+            ".validate": "newData.isNumber()"
+          },
+          "oddsAtBet": {
+            ".validate": "newData.isNumber() && newData.val() > 1 && newData.val() <= 50"
+          },
+          "$other": {
+            ".validate": false
+          }
+        }
+      },
+      "__connTest__": {
+        ".write": true
+      },
+      "baseline": {
+        ".write": true,
+        "ts": {
+          ".validate": "newData.isNumber()"
+        }
+      },
+      "$other": {
+        ".validate": false
+      }
     }
   }
 }

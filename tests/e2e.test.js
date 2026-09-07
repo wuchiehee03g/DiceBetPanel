@@ -17,9 +17,14 @@ const patch = (p, b)=> fetch(`${BASE}/${p}.json`, { method:'PATCH', body:JSON.st
 const post  = (p, b)=> fetch(`${BASE}/${p}.json`, { method:'POST',  body:JSON.stringify(b) }).then(j);
 const del   = p => fetch(`${BASE}/${p}.json`, { method:'DELETE' }).then(j);
 
+/* 規則只在各分支開放寫入，對節點本身的整包寫入／刪除都會被擋，
+   所以建立與清除都要逐分支做（正式的匯入與重置也是這樣寫的）。 */
+const BRANCHES = ['schema', 'maxBet', 'players', 'markets', 'bets', 'baseline', '__connTest__'];
+const wipe = async ()=>{ for(const b of BRANCHES) await del(`${T}/${b}`); };
+
 (async ()=>{
 try{
-  await del(T);
+  await wipe();
 
   /* ---------- 建立全部盤口 ---------- */
   section('建立第三屆全部盤口');
@@ -29,7 +34,11 @@ try{
     .concat(A.buildAllDuelMarkets({ banker:'莊家' }).markets);
   const markets = {};
   built.forEach((m, i)=>{ markets['m' + String(i).padStart(2, '0')] = m; });
-  await put(T, { schema:3, maxBet:5000, players, markets });
+  // 逐分支寫入（規則不接受對節點本身的整包 PUT）
+  await put(`${T}/schema`, 3);
+  await put(`${T}/maxBet`, 5000);
+  await put(`${T}/players`, players);
+  await put(`${T}/markets`, markets);
 
   let st = A.normalize(await get(T));
   ok(st.markets.length === 38, `寫入 38 個盤（實得 ${st.markets.length}）`);
@@ -81,6 +90,33 @@ try{
   st = A.normalize(await get(T)); P = A.buildPools(st);
   const b2 = A.liveOdds(P, st.markets.find(m => m.id === bs31.id), bs31.options[0].id).value;
   ok(b1 === b2 && b1 === 2.04, `固定賠率盤不隨下注變動（維持 ${b1}x）`);
+
+  /* ---------- 資料庫規則實際擋不擋得住 ----------
+     測試節點套用與正式節點相同的驗證規則，所以這一段測的是規則本身。
+     第三屆籌備時規則裡的節點名忘了跟著改，導致每一筆合法注單都被擋，
+     就是因為當時測試節點用的是全開規則而沒測到。 */
+  section('資料庫規則');
+  const cleanup = [];
+  const tryBet = async (label, body, shouldPass)=>{
+    const r = await fetch(`${BASE}/${T}/bets.json`, { method:'POST', body:JSON.stringify(body) });
+    if(r.ok) cleanup.push((await r.json()).name);
+    ok(r.ok === shouldPass, `${label}：${r.ok ? '通過' : '被擋 ' + r.status}`);
+  };
+  const bsM = st.markets.find(m => m.id === bs31.id);
+  const pend = st.markets.find(m => m.pendingPlayers);
+  const b0 = { optionId:bsM.options[0].id, name:'規則測試', bettorId:'rule', ts:Date.now() };
+  await tryBet('合法注單 $100',          { ...b0, marketId:bsM.id, amount:100,  oddsAtBet:2.04 }, true);
+  await tryBet('$5,000（全域上限）',      { ...b0, marketId:bsM.id, amount:5000, oddsAtBet:2.04 }, true);
+  await tryBet('$5,001（超過上限）',      { ...b0, marketId:bsM.id, amount:5001, oddsAtBet:2.04 }, false);
+  await tryBet('賽前盤 $1,000（盤口上限）', { ...b0, marketId:champ.id, optionId:'p0', amount:1000, oddsAtBet:12.8 }, true);
+  await tryBet('賽前盤 $1,001（超過）',    { ...b0, marketId:champ.id, optionId:'p0', amount:1001, oddsAtBet:12.8 }, false);
+  await tryBet('封盤中的待定盤',           { ...b0, marketId:pend.id, optionId:'p0', amount:100, oddsAtBet:1.95 }, false);
+  await tryBet('賠率 99（超出 1.01~50）',  { ...b0, marketId:bsM.id, amount:100, oddsAtBet:99 }, false);
+  await tryBet('不存在的盤口',             { ...b0, marketId:'nope', amount:100, oddsAtBet:2 }, false);
+  await tryBet('金額 0',                   { ...b0, marketId:bsM.id, amount:0,   oddsAtBet:2.04 }, false);
+  for(const id of cleanup) await del(`${T}/bets/${id}`);
+  st = A.normalize(await get(T));
+  ok(st.bets.length === 2, `規則測試的注單已清除，剩原本 2 筆（實得 ${st.bets.length}）`);
 
   /* ---------- 禁押規則 ---------- */
   section('禁押規則');
@@ -144,15 +180,16 @@ try{
 
   /* ---------- 收尾 ---------- */
   section('收尾');
-  await del(T);
-  ok((await get(T)) === null, '測試節點已清除');
+  await wipe();
+  const left = await get(T);
+  ok(left === null, `測試節點已清除${left ? '（殘留：' + Object.keys(left).join() + '）' : ''}`);
   const prod = await get(A.DB_PATH);
   ok(true, `正式節點 ${A.DB_PATH}：${prod ? Object.keys(prod.markets || {}).length + ' 個盤' : '尚未建立'}`);
 
 }catch(e){
   fail++;
   console.log('  ✗ 例外：' + String(e).slice(0, 200));
-  try{ await del(T); }catch(_){}
+  try{ await wipe(); }catch(_){}
 }
 
 console.log(`\n${'='.repeat(52)}`);
