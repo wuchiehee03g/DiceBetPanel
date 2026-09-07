@@ -4,6 +4,10 @@
     ".write": false,
     "diceLiarKingState": {
       ".read": true,
+      ".write": false
+    },
+    "diceLiarKingState3": {
+      ".read": true,
       "schema": {
         ".write": true,
         ".validate": "newData.isNumber()"
@@ -109,9 +113,19 @@
       "__connTest__": {
         ".write": true
       },
+      "baseline": {
+        ".write": true,
+        "ts": {
+          ".validate": "newData.isNumber()"
+        }
+      },
       "$other": {
         ".validate": false
       }
+    },
+    "diceLiarKingState3_TEST": {
+      ".read": true,
+      ".write": true
     }
   }
 }

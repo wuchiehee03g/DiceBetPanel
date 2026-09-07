@@ -9,7 +9,10 @@
    多人同時下注時才不會互相覆蓋，統計也不可能跟帳本對不起來。
    ============================================================ */
 
-const DB_PATH        = 'diceLiarKingState';
+/* 每屆換一個資料節點：舊屆的注單與賽果原封留在原節點，誤按重置也傷不到。
+   辦下一屆時改這兩行，再把新節點加進 database.rules.json 即可。 */
+const TOURNAMENT_NAME = '第三屆';
+const DB_PATH        = 'diceLiarKingState3';   // 第二屆在 diceLiarKingState，已封存唯讀
 const PLAYER_COUNT   = 16;
 const DEFAULT_ODDS   = 2;       // 新選項的預設賠率（1:1 平賭）
 /* 定價黏性：相當於莊家先押多少錢在自己開的價上。
@@ -306,6 +309,50 @@ function bracketMatch(id){
 }
 // 只有單挑場次適用「獲勝者剩餘血格」的大小／單雙盤
 function duelMatches(){ return allBracketMatches().filter(m => m.format === 'duel'); }
+
+/* 賽前盤 --------------------------------------------------------------
+   五個「從 16 人裡選一個」的盤。選項 id 用 p0~p15，標籤跟著玩家名單走，
+   所以之後改名單這些盤會自動顯示新名字（見 optionLabel）。
+
+   第二屆是在後台一個一個手開的 —— 五個盤 × 16 個選項，很容易漏設某個上限。
+   -------------------------------------------------------------------- */
+const PRE_MAX_BET        = 1000;   // 賽前盤單筆上限：選項多、賠率高，壓得比全域的 5000 低
+const PRE_MAX_PER_BETTOR = 5000;   // 每人在單一賽前盤的總額上限
+
+const PRE_MARKETS = [
+  { title: '最後總冠軍', desc: () => `誰奪下${TOURNAMENT_NAME}總冠軍？獎池 60%` },
+  { title: '總亞軍',     desc: () => '誰是亞軍？獎池 30%' },
+  { title: '總季軍',     desc: () => '誰是季軍？獎池 10%' },
+  { title: 'Bubble Guy', desc: () => '誰是第四名？最後一個無法進錢圈的泡沫' },
+  { title: '敗部冠軍',   desc: () => '誰從敗部一路打上來拿到敗部冠軍？' },
+];
+
+function buildPreMarkets(opts){
+  opts = opts || {};
+  const banker = String(opts.banker || '').trim();
+  if(!banker) return { error: '請輸入莊家名字' };
+  const odds   = (typeof opts.odds   === 'number' && opts.odds   > 1) ? opts.odds   : MULTI_ODDS;
+  const priorK = (typeof opts.priorK === 'number' && opts.priorK > 0) ? opts.priorK : MULTI_PRIOR_K;
+
+  return { markets: PRE_MARKETS.map((m, idx)=>{
+    const options = {};
+    for(let i = 0; i < PLAYER_COUNT; i++) options['p' + i] = { label:null, order:i, odds };
+    return {
+      title: m.title,
+      desc: m.desc(),
+      category: 'multi',
+      banker,
+      matchNo: null,
+      order: idx,
+      autoPrice: true,
+      priorK,
+      maxBet: PRE_MAX_BET,
+      maxPerBettor: PRE_MAX_PER_BETTOR,
+      maxLiability: MULTI_MAX_LIABILITY,
+      options,
+    };
+  }) };
+}
 
 /* 開全場的盤 ----------------------------------------------------------
    賽事一開始就把所有盤開好，不用每場臨時開。問題是「誰獲勝」需要知道
@@ -855,15 +902,20 @@ function restoreConfigPaths(state, baseline, scope){
     const matchNo = cfg.matchNo || null;
     if(!inScope(scope, matchNo)) return;
     n++;
+    // 待定與封盤是成組成立的（見 buildAllDuelMarkets）：參賽者還沒指定的
+    // 「誰獲勝」盤必須維持封盤，只解封會變成「待定但看得到下注框」。
+    const stillPending = cfg.pendingPlayers === true;
+
     if(!cur){
       // 盤口被刪掉了 —— 整包寫回去
-      paths[`markets/${id}`] = Object.assign({}, cfg, { locked:false, settled:false, winnerId:null });
+      paths[`markets/${id}`] = Object.assign({}, cfg,
+        { locked:stillPending, settled:false, winnerId:null });
       return;
     }
     BASELINE_FIELDS.forEach(f=>{
       paths[`markets/${id}/${f}`] = cfg[f] === undefined ? null : cfg[f];
     });
-    paths[`markets/${id}/locked`]   = false;
+    paths[`markets/${id}/locked`]   = stillPending;
     paths[`markets/${id}/settled`]  = false;
     paths[`markets/${id}/winnerId`] = null;
     // 選項整包換掉，這樣多出來或改壞的選項一次清乾淨
@@ -1042,6 +1094,7 @@ if(typeof module !== 'undefined' && module.exports){
     ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, MULTI_PRIOR_K, MULTI_MAX_LIABILITY,
     playerGroups, bigSmallDesc, oddEvenDesc,
     hpDistribution, hpDistributionItems, hpDist, bigSmallProbs, oddEvenProbs, oddsFromProb,
+    TOURNAMENT_NAME, PRE_MARKETS, PRE_MAX_BET, PRE_MAX_PER_BETTOR, buildPreMarkets,
     buildMatchMarkets, buildAllDuelMarkets, participantOptions, matchSortKey, nextMatchNo,
     esc, fmt, uid, seed, normalize, buildPools,
     poolOf, marketTotal, usesPlayerRoster, optionLabel, betOdds,

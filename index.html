@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>第二屆骰俠吹牛王 · 投注站</title>
+<title>第三屆骰俠吹牛王 · 投注站</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -15,7 +15,7 @@
 <div class="wrap">
   <header class="board-header">
     <div class="title-block">
-      <div class="eyebrow">第二屆 · 骰俠吹牛王賽事</div>
+      <div class="eyebrow" id="eyebrow">骰俠吹牛王賽事</div>
       <h1>吹牛王<span class="accent">投注站</span></h1>
     </div>
   </header>
@@ -120,6 +120,7 @@ function boot(){
     const v = uid(); try{ localStorage.setItem(ID_KEY, v); }catch(e){} return v;
   })();
   me.name = localStorage.getItem(NAME_KEY) || '';
+  document.getElementById('eyebrow').textContent = `${TOURNAMENT_NAME} · 骰俠吹牛王賽事`;
   loadFolded();
   // 舊版用同一個 key 存過 'main'/'prop'，直接沿用會比對不到任何盤口、
   // 畫面一片空白且沒有分頁反白。所以存進來的值一定要驗證。
@@ -300,7 +301,9 @@ function renderMarketCard(market){
   const total   = marketTotal(pools, market);
   const maxPool = Math.max(1, ...market.options.map(o=>poolOf(pools, market.id, o.id)));
   const info    = market.settled ? settleInfo(state, pools, market) : null;
-  const canBet  = !market.settled && !market.locked;
+  // 參賽者還沒指定的盤一律不能下注 —— 選項還是佔位的 p0/p1，
+  // 跟它有沒有被封盤無關（還原配置曾經只解封而留下這個狀態）
+  const canBet  = !market.settled && !market.locked && !market.pendingPlayers;
 
   const rows = market.options.map((opt, idx)=>{
     const pool  = poolOf(pools, market.id, opt.id);
@@ -479,7 +482,7 @@ function renderBracket(){
   const duels = duelMatches();
   return `
     <div class="market-card">
-      <div class="market-head"><h2>第二屆 · 雙敗淘汰賽制</h2>
+      <div class="market-head"><h2>${TOURNAMENT_NAME} · 雙敗淘汰賽制</h2>
         <div class="market-pool-badge">共 ${allBracketMatches().length} 場</div></div>
       <div class="bk-intro">
         <b>雙敗淘汰</b>：在勝部輸一次會掉到敗部，還有一次機會；在敗部再輸就永久淘汰。
@@ -579,6 +582,7 @@ async function placeBet(marketId, optionId){
     if(!m)        { showToast('這個盤口已不存在'); return; }
     if(m.settled) { showToast('此盤已結算，無法下注'); return; }
     if(m.locked)  { showToast('此盤已封盤，無法下注'); return; }
+    if(m.pendingPlayers){ showToast('這場的對戰組合還沒確定，暫時不能下注'); return; }
 
     const fresh = normalize(raw);
     const freshPools = buildPools(fresh);

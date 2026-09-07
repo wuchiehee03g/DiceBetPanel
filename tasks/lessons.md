@@ -50,10 +50,21 @@ strictTriggerValidation），所以兩邊不一致時你驗證不出來。
 而玩家頁的 `canBet` 只看 `settled/locked`，不看 `pendingPlayers` —— 玩家會看到
 下注框，選項卻還是佔位用的 p0/p1。
 
-**現況**：賽中沒有動代碼，用「還原後立刻指定參賽者或封盤」規避。實際重置第三階段
-時我是直接在 REST 層對 pending 的盤補寫 `locked: true`。
+**已修正**（2026-09-07，第三屆籌備時）：`restoreConfigPaths` 依基準點的
+`pendingPlayers` 決定寫回的 `locked`；玩家頁的 `canBet` 與 `placeBet` 也各加一條
+`pendingPlayers` 檢查 —— 待定盤不該能下注，跟它有沒有被封盤無關（根因在此）。
 
 **怎麼避免**：改狀態欄位時，先找出「哪些欄位是成組成立的」。單獨寫其中一個就是 bug。
+
+---
+
+## 測試要放進 repo，不要放暫存目錄
+
+第二屆累積的 592 項測試（6 套）全寫在 session 的 scratchpad，從沒 commit。
+session 一結束就全沒了，第三屆等於從零重建。
+
+**怎麼避免**：測試是產品的一部分，第一次寫就放 `tests/` 並 commit。
+現在有 `npm test`（語法 + 邏輯 + DOM）與 `npm run test:e2e`。
 
 ---
 

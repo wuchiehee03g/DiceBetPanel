@@ -1,6 +1,6 @@
 # 骰俠吹牛王 · 投注站
 
-第二屆骰俠吹牛王賽事的網頁版投注器。全部盤口都是**莊家盤**：由指定的莊家開價、
+第三屆骰俠吹牛王賽事的網頁版投注器。全部盤口都是**莊家盤**：由指定的莊家開價、
 承擔賠付風險，賠率會隨大家的下注金額自動調整。
 
 ## 兩個網址
@@ -156,6 +156,28 @@ diceLiarKingState/
 - 統計不可能跟帳本對不起來
 
 唯一存在注單上的推導結果是 `oddsAtBet` —— 因為那個值就是當時的協議本身。
+
+## 每屆一個資料節點
+
+| 屆數 | 節點 | 狀態 |
+|---|---|---|
+| 第二屆 | `diceLiarKingState` | 已封存，規則設為**唯讀**（38 盤、285 筆注單） |
+| 第三屆 | `diceLiarKingState3` | 使用中 |
+| 測試 | `diceLiarKingState3_TEST` | `tests/e2e.test.js` 用的丟棄節點 |
+
+辦下一屆：改 `app.js` 開頭的 `TOURNAMENT_NAME` 與 `DB_PATH`，把新節點加進
+`database.rules.json`（舊節點改成 `".write": false` 封存），
+`npm run deploy:rules`，然後在莊家後台按「一次建立全部盤口」。
+
+## 測試
+
+```bash
+npm install     # 只需要一次，裝 jsdom
+npm test        # 語法 + 邏輯 153 項 + DOM 49 項
+npm run test:e2e   # 打真實 Firebase 的測試節點，33 項
+```
+
+測試放在 `tests/`，**不要再寫在暫存目錄** —— 第二屆那 592 項就是這樣弄丟的。
 
 ## ⚠️ 安全性：信任制，但寫入有驗證
 

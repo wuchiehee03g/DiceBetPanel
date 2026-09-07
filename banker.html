@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>第二屆骰俠吹牛王 · 莊家後台</title>
+<title>第三屆骰俠吹牛王 · 莊家後台</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
@@ -15,7 +15,7 @@
 <div class="wrap">
   <header class="board-header banker">
     <div class="title-block">
-      <div class="eyebrow">第二屆 · 內部使用 · 請勿外流</div>
+      <div class="eyebrow" id="eyebrow">內部使用 · 請勿外流</div>
       <h1>莊家<span class="accent-b">後台</span></h1>
     </div>
     <a class="head-link" href="index.html" target="_blank">開啟玩家下注頁 ↗</a>
@@ -81,6 +81,7 @@ function setStorageWarning(broken){
 function boot(){
   const savedTab = localStorage.getItem(TAB_KEY);
   activeTab = ['markets','reports','settings','guide'].includes(savedTab) ? savedTab : 'markets';
+  document.getElementById('eyebrow').textContent = `${TOURNAMENT_NAME} · 內部使用 · 請勿外流`;
   if(!firebaseReady){
     setStorageWarning(true);
     state = normalize(seed()); pools = buildPools(state); render();
@@ -244,23 +245,32 @@ function renderTabs(){
    盤口管理
    ============================================================ */
 function renderOpenAllPanel(){
-  const have = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
-  const missing = duelMatches().filter(m=>!have.has(m.id));
-  if(missing.length === 0){
-    return `<div class="panel"><h2>全場單挑盤</h2>
-      <p class="form-hint">11 場單挑的盤都已開好。參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p></div>`;
+  const have      = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
+  const haveTitle = new Set(state.markets.filter(m=>!m.matchNo).map(m=>m.title));
+  const missing   = duelMatches().filter(m=>!have.has(m.id));
+  const missingPre = PRE_MARKETS.filter(m=>!haveTitle.has(m.title));
+  const total = missingPre.length + missing.length * 3;
+
+  if(total === 0){
+    return `<div class="panel"><h2>${esc(TOURNAMENT_NAME)}全部盤口</h2>
+      <p class="form-hint">5 個賽前盤與 11 場單挑的盤都已開好，共 38 個。
+        參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p></div>`;
   }
   return `<div class="panel">
-    <h2>一次開好全場單挑盤</h2>
+    <h2>一次建立${esc(TOURNAMENT_NAME)}全部盤口</h2>
     <div class="form-col" style="max-width:460px;">
       <p class="form-hint">
-        還沒開的場次：<b>${missing.map(m=>esc(m.id)).join('、')}</b>（${missing.length} 場，共 ${missing.length*3} 個盤）<br><br>
-        <b>大小／單雙</b>會直接開放收注 —— 血格機率與誰上場無關。<br>
+        ${missingPre.length ? `還沒開的<b>賽前盤</b>：<b>${missingPre.map(m=>esc(m.title)).join('、')}</b>
+          （${missingPre.length} 個，各 16 個選項 @ ${MULTI_ODDS.toFixed(2)}x）<br><br>` : ''}
+        ${missing.length ? `還沒開的<b>單挑場次</b>：<b>${missing.map(m=>esc(m.id)).join('、')}</b>
+          （${missing.length} 場，共 ${missing.length*3} 個盤）<br><br>` : ''}
+        <b>賽前盤與大小／單雙</b>會直接開放收注 —— 血格機率與誰上場無關。<br>
         <b>誰獲勝</b>會開成「參賽者待定」並封盤，等前面階段打完，
-        在該盤上用兩個下拉指定對戰組合就會開放。
+        在該盤上用兩個下拉指定對戰組合就會開放。<br><br>
+        已經存在的盤<b>不會被動到</b>，這個按鈕只補缺的。
       </p>
       <input id="allBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
-      <button type="button" id="openAllBtn">開好這 ${missing.length*3} 個盤</button>
+      <button type="button" id="openAllBtn">建立這 ${total} 個盤</button>
     </div>
   </div>`;
 }
@@ -1247,16 +1257,28 @@ async function resetPlayers(){
 async function openAllDuels(){
   const banker = (document.getElementById('allBanker').value || '').trim();
   if(!banker){ showToast('請輸入莊家名字'); return; }
-  const have = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
-  const built = buildAllDuelMarkets({ banker });
-  if(built.error){ showToast(built.error); return; }
-  const todo = built.markets.filter(m=>!have.has(m.matchNo));
-  if(todo.length === 0){ showToast('所有場次都已開好'); return; }
 
-  const nos = [...new Set(todo.map(m=>m.matchNo))];
+  const have      = new Set(state.markets.filter(m=>m.matchNo).map(m=>m.matchNo));
+  const haveTitle = new Set(state.markets.filter(m=>!m.matchNo).map(m=>m.title));
+
+  const duel = buildAllDuelMarkets({ banker });
+  if(duel.error){ showToast(duel.error); return; }
+  const pre = buildPreMarkets({ banker });
+  if(pre.error){ showToast(pre.error); return; }
+
+  // 只補缺的，已存在的一律不動
+  const todoPre  = pre.markets.filter(m=>!haveTitle.has(m.title));
+  const todoDuel = duel.markets.filter(m=>!have.has(m.matchNo));
+  const todo = todoPre.concat(todoDuel);
+  if(todo.length === 0){ showToast('所有盤口都已開好'); return; }
+
+  const nos = [...new Set(todoDuel.map(m=>m.matchNo))];
   if(!confirm(
-    `一次開好 ${nos.length} 場、共 ${todo.length} 個盤：\n\n${nos.join('、')}\n\n` +
-    `大小／單雙直接開放收注；誰獲勝會封盤待定，之後再指定參賽者。`
+    `建立 ${todo.length} 個盤：\n\n` +
+    (todoPre.length  ? `· 賽前盤 ${todoPre.length} 個：${todoPre.map(m=>m.title).join('、')}\n` : '') +
+    (todoDuel.length ? `· 單挑 ${nos.length} 場、${todoDuel.length} 個盤：${nos.join('、')}\n` : '') +
+    `\n賽前盤與大小／單雙直接開放收注；誰獲勝會封盤待定，之後再指定參賽者。\n` +
+    `已存在的盤不會被動到。`
   )) return;
 
   try{
