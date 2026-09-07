@@ -159,7 +159,7 @@ diceLiarKingState/
 
 ## ⚠️ 安全性：信任制，但寫入有驗證
 
-已於 2026-09-07 發布 `firebase-rules-貼上用.json`。現在的分界是：
+已於 2026-09-07 發布 `database.rules.json`。現在的分界是：
 
 - **讀取全開放** —— 任何人都看得到全部資料
 - **寫入有驗證** —— 金額上限、封盤／已結算後不能下注、賠率須在 1.01~50、
@@ -180,6 +180,25 @@ diceLiarKingState/
 網站會毫無預警地連不上（2026-09-07 就發生過一次，症狀是所有路徑都回
 `401 Permission denied`，包含不存在的路徑）。選「鎖定模式」再貼這份規則；
 repo 裡的三個規則檔都不含任何時間期限。
+
+### 改規則的方法
+
+規則是版控的一部分，改 `database.rules.json` 之後用 CLI 部署，不要手貼主控台：
+
+```bash
+firebase deploy --only database
+```
+
+CLI 已綁定專案（`.firebaserc` → `dicebetpanel`），`firebase.json` 只設定
+database，不含 hosting，所以 `firebase deploy` 不會誤動到別的東西。
+
+規則萬一又把人擋在外面，管理員憑證仍讀得到資料（繞過規則）：
+
+```bash
+firebase database:get /diceLiarKingState -o 備份.json
+```
+
+Git Bash 會把 `/diceLiarKingState` 當成 Windows 路徑，要先 `export MSYS_NO_PATHCONV=1`。
 
 想更嚴格一點，改成「下注只能新增、不能刪改」：
 不能刪改」：

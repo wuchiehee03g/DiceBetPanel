@@ -14,7 +14,7 @@
 **包含擁有者自己**。8/2 比賽當天還在期限內所以一切正常。
 
 **怎麼避免**：
-- 建立資料庫一律選「鎖定模式」，然後貼 `firebase-rules-貼上用.json`
+- 建立資料庫一律選「鎖定模式」，然後 `firebase deploy --only database`
 - 任何規則檔 commit 前 grep 一次 `now\s*[<>]`，出現就是有期限
 - 診斷「連不上」時，先分清楚是**靜態檔案**還是**資料庫**：分別 curl 兩邊。
   連不存在的路徑都回 Permission denied → 一定是根層級規則問題，不是資料沒了
@@ -27,7 +27,19 @@
 貼**（編輯器會報錯）—— 而這個檔案存在的唯一目的就是被貼。
 
 **怎麼避免**：要被工具吃的設定檔就保持格式純淨，說明寫在 README 或另存一份
-註解版。現在 repo 裡 `firebase-rules-貼上用.json` 是可直接貼的版本。
+註解版。現在 `database.rules.json` 是純淨版，由 CLI 直接部署，人不必再手貼。
+
+---
+
+## 規則要用 CLI 部署，不要手貼
+
+手貼主控台會讓「repo 裡的檔案」與「線上實際跑的規則」分離，而 CLI **沒有讀回
+規則的指令**（`database:settings:get` 只支援 defaultWriteSizeLimit 和
+strictTriggerValidation），所以兩邊不一致時你驗證不出來。
+
+2026-09-07 已綁好 `firebase.json` + `.firebaserc`，改規則就是
+`firebase deploy --only database`。順帶好處：`firebase database:get` 走管理員
+憑證繞過規則，規則再鎖住也匯得出資料。
 
 ---
 
