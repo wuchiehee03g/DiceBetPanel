@@ -240,7 +240,7 @@ near(A.liabilityIfBetPlaced(liab, LP, lm, 'p0', 5000, 1.95), -9500, 1e-6,
    ============================================================ */
 section('禁押與暱稱');
 const banSt = A.normalize({
-  players:{ 0:'小明', 1:'小華' },
+  players:{ 0:'小明1', 1:'小華2' },
   markets:{
     w:{ title:'誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家',
         options:{ p0:{order:0, odds:1.95}, p1:{order:1, odds:1.95} } },
@@ -299,6 +299,51 @@ ok(A.isBannedBettor(assigned, assigned.markets.find(m=>m.id==='b1'), '乙').bann
 ok(A.isBannedBettor(assigned, assigned.markets.find(m=>m.id==='b1'), '甲') === null,
    '甲照常可以押 3-1');
 
+/* ★ 編號優先認人 —— 現場要求每個人在暱稱尾端加自己的編號。
+   編號不見得等於名單順序（第二屆「Sean11」排在第 1 位）。 */
+// 名單要填滿 16 位：normalize 會把空位補成「選手N」，而那些佔位名字
+// 本身帶編號 N，會跟真名的編號撞號（只改一半名單時的真實風險）
+const REAL = ['Sean11','淑明4','Gary6','葉師傅7','老林5','小梅2','國國9','阿傑16',
+              '偉恩13','保羅12','Jimer1','小V3','小葉14','偉傑15','小高10','吳杰8'];
+const numPlayers = {};
+REAL.forEach((p, i)=>{ numPlayers[i] = p; });
+const numSt = A.normalize({
+  players: numPlayers,
+  markets:{
+    w:{ title:'誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家',
+        options:{ p0:{order:0, odds:1.95}, p3:{order:1, odds:1.95} } },
+    b:{ title:'大/小', category:'binary', matchNo:'3-1', banker:'莊家',
+        options:{ x:{label:'大', order:0, odds:2.04}, y:{label:'小', order:1, odds:1.69} } },
+  },
+});
+ok(String(A.playerNumbers(numSt).slice(0, 4)) === '11,4,6,7', '從名字解析出編號 11/4/6/7');
+ok(A.playerIndexByName(numSt, 'Sean11') === 0, '逐字相同');
+ok(A.playerIndexByName(numSt, '11') === 0, '★ 只打編號 11 → 認出 Sean11');
+ok(A.playerIndexByName(numSt, '葉師父7') === 3, '★ 名字打錯字但編號對 → 仍認出葉師傅7');
+ok(A.playerIndexByName(numSt, '隨便亂打7') === 3, '★ 編號才是識別依據');
+ok(A.playerIndexByName(numSt, '葉師傅') === 3, '沒打編號時退回名字比對');
+ok(A.playerIndexByName(numSt, '路人') === -1, '沒有編號也不是選手 → -1');
+ok(A.playerIndexByName(numSt, '路人99') === -1, '編號不在名單裡 → -1');
+ok(A.isBannedBettor(numSt, numSt.markets.find(m=>m.id==='b'), '葉師父7').banned,
+   '★ 打錯名字但編號正確，一樣被擋自己的場次');
+ok(A.isBannedBettor(numSt, numSt.markets.find(m=>m.id==='b'), '淑明4') === null,
+   '沒上場的 4 號照常下注');
+// 名單編號重複時不猜
+const dupPlayers = {};
+REAL.forEach((p, i)=>{ dupPlayers[i] = p; });
+dupPlayers[5] = '冒牌11';                       // 與 Sean11 撞號
+const dupSt = A.normalize({ players:dupPlayers, markets:{} });
+ok(A.duplicateNumbers(dupSt).length === 1, '偵測到重複的編號 11');
+ok(A.duplicateNumbers(dupSt)[0].num === 11, '指出是哪個編號重複');
+ok(A.playerIndexByName(dupSt, '隨便11') === -1, '編號重複時不猜是誰');
+ok(A.playerIndexByName(dupSt, 'Sean11') === 0, '逐字相同時仍認得出來');
+ok(A.duplicateNumbers(numSt).length === 0, '正常名單沒有重複編號');
+// 只改一半名單的真實風險：剩下的「選手N」佔位名字帶編號 N
+const halfPlayers = { 0:'阿龍11', 1:'小華4' };
+const halfSt = A.normalize({ players:halfPlayers, markets:{} });
+ok(A.duplicateNumbers(halfSt).length > 0,
+   '★ 只改一半名單時，剩下的「選手N」佔位名會與真名撞號（後台要提醒）');
+
 // 暱稱帶選手編號
 ok(A.sameNickname('小明', '小明7'),   '名單無編號 vs 下注帶編號 → 同一人');
 ok(A.sameNickname('小明7', '小明 7'), '空白與分隔符不影響');
@@ -306,9 +351,13 @@ ok(A.sameNickname('小明7', '小明-7'), '連字號也認');
 ok(!A.sameNickname('小明1', '小明9'), '同名不同編號 → 不同人');
 ok(!A.sameNickname('7', '小明7'),     '只打編號認不出人（寧可放過也不誤鎖）');
 ok(!A.sameNickname('小明', '小華'),   '不同名 → 不同人');
-ok(A.isBannedBettor(banSt, M('w'), '小明7').banned, '「小明7」一樣被擋');
-ok(A.playerIndexByName(banSt, '小明7') === 0, '帶編號認得出名單位置');
+ok(A.playerIndexByName(banSt, '小明') === 0, '沒打編號時用名字認人');
 ok(A.playerIndexByName(banSt, '路人') === -1, '不是選手回 -1');
+/* ⚠️ 編號優先的代價：名單裡的「小明」沒有編號，而未改名的佔位名「選手7」
+   帶編號 7，所以「小明7」會被判成選手7 而不是小明。
+   實務上 16 位都要填成「真名+編號」，這個情況才不會發生 —— 後台會警告。 */
+ok(A.playerIndexByName(banSt, '小明7') === 6,
+   '★ 名單沒編號時，暱稱的編號會對到同編號的佔位名（所以 16 位都要編號）');
 
 // 每人限額：換寫法不能繞過
 const perSt = A.normalize({

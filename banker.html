@@ -875,20 +875,49 @@ function renderSettingsTab(){
           對得上就視為參賽者，擋掉他那個賽事編號底下的三個盤。
           別人的場次與總冠軍盤<b>照常可以下注</b>。<br>
           <b>2. 盤口的莊家不能在自己的盤上下注。</b><br><br>
-          第 1 條靠「暱稱對得上名單」認人，所以<b>請參賽者用真名當暱稱</b>。
-          <b>尾端的選手編號可有可無</b> —— 名單填「小明」，他打「小明7」「小明 7」
-          「小明-7」都認得出來；反過來名單填「小明7」、他只打「小明」也一樣。
-          但編號打成別人的號碼（「小明9」）就不認，寧可放過也不誤鎖。
-          兩位同名選手要靠編號分辨時，名單裡<b>兩個都要帶編號</b>。<br>
-          用完全不同的暱稱還是繞得過 —— 這是軟性限制，最終還是靠現場約定。
+          第 1 條<b>以選手編號認人</b>。請每位選手把自己的編號打在暱稱尾端
+          （「小明7」「小明 7」「小明-7」都可以），系統就會擋掉他的場次 ——
+          <b>名字打錯字也沒關係</b>，編號對就認得出來。<br><br>
+          <b>所以名單裡的 16 個名字一定要各自帶上編號</b>，例如「小明7」。
+          編號不必等於名單順序。沒填編號的人只能靠名字認，打錯字就擋不住；
+          編號重複的話系統不會猜，那些人也不會被擋。<br><br>
+          代價：非選手的觀眾若把暱稱取成「某某7」而 7 是某位選手的編號，
+          會被誤認成那位選手而擋掉那場。上面的對照表可以在開賽前掃一眼。<br>
+          用完全不同的暱稱、也不打編號，還是繞得過 —— 這是軟性限制，
+          最終還是靠現場約定。
         </p>
         ${(function(){
-          const rows = state.players.map((p,i)=>({ p, ms: matchNosOfPlayer(state, i) }))
-                                    .filter(r=>r.ms.length);
-          return rows.length ? `<div class="table-scroll"><table class="ledger">
-            <thead><tr><th>選手</th><th>不能押的場次</th></tr></thead>
-            <tbody>${rows.map(r=>`<tr><td>${esc(r.p)}</td><td>第 ${r.ms.map(esc).join('、')} 場</td></tr>`).join('')}</tbody>
-          </table></div>` : '<p class="form-hint">目前沒有任何單挑場次，所以還沒有人受限。</p>';
+          const nums = playerNumbers(state);
+          const dup  = duplicateNumbers(state);
+          const noNum = state.players.map((p,i)=>({ p, i })).filter(x=>nums[x.i] == null);
+          const placeholder = state.players.filter((p,i)=> p === `選手${i+1}`).length;
+
+          const warn = [];
+          if(placeholder > 0) warn.push(
+            `還有 <b>${placeholder}</b> 位是預設名「選手N」。這些佔位名<b>本身帶編號</b>，
+             會跟真名的編號撞號 —— 請把 16 位一次改完，不要只改一半。`);
+          if(dup.length) warn.push(
+            `<b>編號重複</b>：${dup.map(d=>`${d.num} 號（${d.indexes.map(i=>esc(state.players[i])).join(' / ')}）`).join('、')}
+             —— 認人會有歧義，這些人不會被擋。`);
+          if(noNum.length && placeholder === 0) warn.push(
+            `<b>沒有編號</b>：${noNum.map(x=>esc(x.p)).join('、')} —— 只能靠名字認人，打錯字就擋不住。`);
+
+          const rows = state.players.map((p,i)=>({ p, n:nums[i], ms: matchNosOfPlayer(state, i) }));
+          const barred = rows.filter(r=>r.ms.length);
+
+          return (warn.length ? `<p class="warn-line">⚠️ ${warn.join('<br><br>')}</p>` :
+                   `<p class="ok-line">✅ 16 位都有不重複的編號，靠編號認人沒問題。</p>`)
+            + `<div class="table-scroll"><table class="ledger">
+            <thead><tr><th>選手</th><th class="num">編號</th><th>不能押的場次</th></tr></thead>
+            <tbody>${rows.map(r=>`<tr>
+              <td>${esc(r.p)}</td>
+              <td class="num">${r.n == null ? '<span style="color:var(--red-bright)">無</span>' : r.n}</td>
+              <td>${r.ms.length ? '第 ' + r.ms.map(esc).join('、') + ' 場' : '—'}</td>
+            </tr>`).join('')}</tbody>
+          </table></div>`
+            + (barred.length ? '' :
+               '<p class="form-hint">目前還沒有任何場次指定參賽者，所以還沒有人受限。'
+               + '指定對戰組合後，那兩位就會被擋掉該場次的三個盤。</p>');
         })()}
       </div>
       <div class="form-col">

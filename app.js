@@ -769,16 +769,53 @@ function sameNickname(a, b){
   return x.base === y.base && (x.num == null || y.num == null || x.num === y.num);
 }
 
-// 這個暱稱對應到第幾位選手；不是選手、或有兩位以上分不出來時回 -1
+/* 名單裡每位選手的編號（名字尾端的數字）。現場的編號不見得等於名單順序
+   —— 第二屆的「Sean11」就排在第 1 位 —— 所以一定要從名字本身解析。 */
+function playerNumbers(state){
+  return state.players.map(p => splitNickname(p).num);
+}
+
+// 名單裡有沒有重複的編號？有的話認人會有歧義，後台要提醒莊家
+function duplicateNumbers(state){
+  const seen = new Map(), dup = [];
+  playerNumbers(state).forEach((n, i)=>{
+    if(n == null) return;
+    if(seen.has(n)) dup.push({ num:n, indexes:[seen.get(n), i] });
+    else seen.set(n, i);
+  });
+  return dup;
+}
+
+/* 這個暱稱對應到第幾位選手；認不出來回 -1。
+
+   認人順序：
+   1. 與名單逐字相同
+   2. **編號優先** —— 暱稱尾端的編號對上名單裡同編號的選手。
+      現場要求每個人在暱稱後面加自己的編號，所以編號是最可靠的識別，
+      名字打錯字（葉師傅 → 葉師父）也認得出來
+   3. 沒有編號時，退回名字比對（尾端編號可有可無）
+
+   代價：非選手的觀眾若把暱稱取成「某某7」而 7 是某位選手的編號，
+   會被誤認成那位選手。後台的對照表會列出目前誰對得上，開賽前掃一眼即可。 */
 function playerIndexByName(state, name){
   const nm = norm(name);
   if(!nm) return -1;
+
   const exact = state.players.findIndex(p => norm(p) === nm);
   if(exact >= 0) return exact;
 
+  const want = splitNickname(name);
+  if(want.num != null){
+    const nums = playerNumbers(state);
+    const byNum = [];
+    nums.forEach((n, i)=>{ if(n === want.num) byNum.push(i); });
+    if(byNum.length === 1) return byNum[0];
+    if(byNum.length > 1) return -1;            // 名單裡編號重複，不猜
+  }
+
   const hits = [];
   state.players.forEach((p, i)=>{ if(sameNickname(p, name)) hits.push(i); });
-  return hits.length === 1 ? hits[0] : -1;   // 有歧義就不猜
+  return hits.length === 1 ? hits[0] : -1;     // 有歧義就不猜
 }
 
 /* 這位選手參賽的所有賽事編號。
@@ -1107,7 +1144,7 @@ if(typeof module !== 'undefined' && module.exports){
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
     bettorStakeOn, checkPerBettor, isBannedBettor, playerIndexByName, matchNosOfPlayer,
-    splitNickname, sameNickname,
+    splitNickname, sameNickname, playerNumbers, duplicateNumbers,
     BASELINE_FIELDS, snapshotMarkets, baselineMarkets, baselineDiff, inScope,
     restoreConfigPaths, clearBetsPaths, deleteScopePaths, resetScopes,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
