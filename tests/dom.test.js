@@ -125,6 +125,64 @@ section('待定盤不可下注（第三屆修的 bug）');
   ok(p.text().includes('待定'), '標題有「待定」標記');
 }
 
+section('參賽者只能押自己獲勝');
+{
+  // 名單填成「真名+編號」，3-1 指定 阿龍11(p0) vs 保羅12(p1)
+  const names = {};
+  ['阿龍11','保羅12','小梅2','國國9','老林5','Gary6','葉師傅7','吳杰8',
+   '小高10','Jimer1','小V3','偉恩13','小葉14','偉傑15','阿傑16','淑明4']
+    .forEach((p, i)=>{ names[i] = p; });
+  const data = { [A.DB_PATH]: { schema:3, maxBet:5000, players:names, markets:{
+    w:{ title:'3-1 · 誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家', order:0,
+        options:{ p0:{order:0, odds:1.95}, p1:{order:1, odds:1.95} } },
+    b:{ title:'3-1 · 結束比分 大/小', category:'binary', matchNo:'3-1', banker:'莊家', order:1,
+        options:{ x:{label:'大', order:0, odds:2.04}, y:{label:'小', order:1, odds:1.69} } },
+    n:{ title:'3-2 · 誰獲勝', category:'binary', matchNo:'3-2', banker:'莊家', order:2,
+        options:{ p2:{order:0, odds:1.95}, p3:{order:1, odds:1.95} } },
+  } } };
+
+  // 阿龍11 本人來下注
+  const p = await load('index.html', { storage:{ 'dbp-name':'阿龍11' }, data });
+  ok(p.errors.length === 0, `載入無錯誤${p.errors.length ? '：' + p.errors[0] : ''}`);
+
+  const rowsOf = title => [...p.doc.querySelectorAll('.market-card')]
+    .find(c => c.textContent.includes(title));
+  const winCard = rowsOf('誰獲勝');
+  ok(!!winCard, '看得到 3-1 誰獲勝盤');
+
+  const optRows = [...winCard.querySelectorAll('.option-row')];
+  ok(optRows.length === 2, '誰獲勝有兩個選項');
+  const mine = optRows.find(r => r.textContent.includes('阿龍11'));
+  const foe  = optRows.find(r => r.textContent.includes('保羅12'));
+  ok(!!mine && !!foe, '兩個選項都讀到名單的真名');
+  ok(!!mine.querySelector('.bet-form'), '★ 自己那一欄有下注框');
+  ok(!foe.querySelector('.bet-form'),   '★ 對手那一欄沒有下注框');
+  ok(!!foe.querySelector('.opt-ban'),   '★ 對手那一欄顯示禁押說明');
+  ok(foe.textContent.includes('只能押自己獲勝'), '禁押說明講清楚原因');
+
+  const bigCard = [...p.doc.querySelectorAll('.market-card')].find(c => c.textContent.includes('大/小'));
+  ok(bigCard && bigCard.querySelectorAll('.bet-form').length === 0, '★ 自己場次的大小盤兩欄都不能押');
+  ok(bigCard && bigCard.querySelectorAll('.opt-ban').length === 2, '大小盤兩欄都顯示禁押說明');
+
+  // 全站共 6 個選項：3-1 誰獲勝 2 + 3-1 大小 2 + 3-2 誰獲勝 2
+  ok(p.doc.querySelectorAll('.bet-form').length === 3,
+     `★ 阿龍11 可押 3 欄：自己獲勝 + 3-2 兩欄（實得 ${p.doc.querySelectorAll('.bet-form').length}）`);
+  ok(p.doc.querySelectorAll('.opt-ban').length === 3,
+     '★ 被擋 3 欄：對手獲勝 + 自己場次的大小兩欄');
+  ok(p.text().includes('只能押自己獲勝'), '身分列提示只能押自己獲勝');
+
+  // 換成兩場都沒上場的人（老林5 是 p4，不在 3-1 也不在 3-2）
+  const q = await load('index.html', { storage:{ 'dbp-name':'老林5' }, data });
+  ok(q.doc.querySelectorAll('.bet-form').length === 6, '★ 非參賽者六個選項全部可押');
+  ok(q.doc.querySelectorAll('.opt-ban').length === 0, '非參賽者沒有任何禁押提示');
+
+  // 3-2 的參賽者：只能押自己那一欄，3-1 完全不受限
+  const r = await load('index.html', { storage:{ 'dbp-name':'小梅2' }, data });
+  ok(r.doc.querySelectorAll('.bet-form').length === 5,
+     `★ 小梅2 可押 5 欄：3-1 全部 4 欄 + 3-2 自己 1 欄（實得 ${r.doc.querySelectorAll('.bet-form').length}）`);
+  ok(r.doc.querySelectorAll('.opt-ban').length === 1, '只有 3-2 的對手那一欄被擋');
+}
+
 section('莊家頁');
 {
   const p = await load('banker.html', { storage:{ 'dbp-banker-tab':'markets' }, data: makeData() });

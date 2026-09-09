@@ -834,7 +834,11 @@ function matchNosOfPlayer(state, playerIndex){
   return [...set];
 }
 
-function isBannedBettor(state, market, name){
+/* optionId 省略時視為「這一盤有沒有任何限制」，會回報最嚴格的情況。
+
+   參賽者可以賭自己獲勝，不能賭自己輸 —— 選手控制不了贏，但控制得了輸。
+   大小／單雙同樣擋掉：參賽者能靠多輸幾格或拖長比賽來左右比分。 */
+function isBannedBettor(state, market, name, optionId){
   const nm = norm(name);
   if(!nm) return null;
 
@@ -845,10 +849,25 @@ function isBannedBettor(state, market, name){
   const idx = playerIndexByName(state, name);
   if(idx >= 0 && market && market.matchNo){
     if(matchNosOfPlayer(state, idx).includes(market.matchNo)){
-      return { banned:true, reason:`你是第 ${market.matchNo} 場的參賽者，不能押自己的場次` };
+      const own = 'p' + idx;
+      const isWinMarket = market.options.some(o => o.id === own);
+      if(isWinMarket && optionId === own) return null;   // 賭自己獲勝，放行
+      if(isWinMarket){
+        return { banned:true, reason:`你是第 ${market.matchNo} 場的參賽者，只能押自己獲勝，不能押對手` };
+      }
+      return { banned:true, reason:`你是第 ${market.matchNo} 場的參賽者，不能押自己場次的比分盤` };
     }
   }
   return null;
+}
+
+// 這位選手在這一盤唯一能押的選項（賭自己獲勝）；沒有就回 null
+function allowedSelfOption(state, market, name){
+  const idx = playerIndexByName(state, name);
+  if(idx < 0 || !market || !market.matchNo) return null;
+  if(!matchNosOfPlayer(state, idx).includes(market.matchNo)) return null;
+  const own = 'p' + idx;
+  return market.options.some(o => o.id === own) ? own : null;
 }
 
 /* 設定基準點與獨立還原 ----------------------------------------------
@@ -1143,7 +1162,8 @@ if(typeof module !== 'undefined' && module.exports){
     bookOverround, bookMargin, autoOdds, liveOdds, maxBetImpact, suggestPriorK,
     bankerNetIfWins, worstCase, settleInfo, betOutcome,
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
-    bettorStakeOn, checkPerBettor, isBannedBettor, playerIndexByName, matchNosOfPlayer,
+    bettorStakeOn, checkPerBettor, isBannedBettor, allowedSelfOption,
+    playerIndexByName, matchNosOfPlayer,
     splitNickname, sameNickname, playerNumbers, duplicateNumbers,
     BASELINE_FIELDS, snapshotMarkets, baselineMarkets, baselineDiff, inScope,
     restoreConfigPaths, clearBetsPaths, deleteScopePaths, resetScopes,

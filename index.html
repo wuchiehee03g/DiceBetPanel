@@ -185,7 +185,8 @@ function renderIdentity(){
   const myIdx = playerIndexByName(state, me.name);
   const barred = myIdx >= 0 ? matchNosOfPlayer(state, myIdx) : [];
   const barredNote = barred.length
-    ? `<br><span style="color:var(--red-bright)">🚫 你是參賽者，不能押第 ${barred.map(esc).join('、')} 場（你自己的場次）</span>`
+    ? `<br><span style="color:var(--red-bright)">🚫 你是第 ${barred.map(esc).join('、')} 場的參賽者：`
+      + `<b>只能押自己獲勝</b>，不能押對手贏，也不能押自己場次的大小／單雙。</span>`
     : '';
 
   if(mine.length === 0){
@@ -314,6 +315,8 @@ function renderMarketCard(market){
     const lo = liveOdds(pools, market, opt.id);
     const moved = lo.auto && Math.abs(lo.value - lo.opening) >= 0.01;
     const key = `${market.id}:${opt.id}`;
+    // 逐選項判斷：參賽者可以賭自己獲勝，不能賭自己輸
+    const optBan = isBannedBettor(state, market, me.name, opt.id);
 
     return `
       <div class="option-row ${isWinner?'is-winner':''}">
@@ -328,13 +331,14 @@ function renderMarketCard(market){
           </div>
           <div class="bar-track"><div class="bar-fill blue" style="width:${total>0?(pool/maxPool*100):0}%"></div></div>
           <div class="pool-amt">注金：$${fmt(pool)}${myAmt>0?` · <span class="mine">我押 $${fmt(myAmt)}</span>`:''}</div>
-          ${canBet ? `
+          ${canBet && !optBan ? `
           <div class="bet-form">
             <input class="amt-in" type="number" min="1" max="${effectiveMaxBet(state, market)}" step="1" inputmode="numeric"
                    placeholder="金額" data-bet-amt="${key}" value="${esc(draftAmounts[key] || '')}">
             ${QUICK_AMOUNTS.map(a=>`<button type="button" class="quick" data-quick="${key}" data-amt="${a}">+${a}</button>`).join('')}
             <button class="bet-go" data-bet-btn="${key}">下注</button>
           </div>` : ''}
+          ${canBet && optBan ? `<div class="opt-ban">🚫 ${esc(optBan.reason)}</div>` : ''}
         </div>
       </div>`;
   }).join('');
@@ -588,7 +592,7 @@ async function placeBet(marketId, optionId){
     const freshPools = buildPools(fresh);
     const freshMarket = fresh.markets.find(x=>x.id === marketId);
 
-    const banned = isBannedBettor(fresh, freshMarket, name);
+    const banned = isBannedBettor(fresh, freshMarket, name, optionId);
     if(banned){ showToast(banned.reason); return; }
 
     const recheck = validateBetAmount(inp.value, effectiveMaxBet(fresh, freshMarket));

@@ -253,6 +253,43 @@ const banSt = A.normalize({
   },
 });
 const M = id => banSt.markets.find(x=>x.id === id);
+
+/* ★ 參賽者可以賭自己獲勝，不能賭自己輸 ——
+   選手控制不了贏，但控制得了輸。大小／單雙同樣擋，因為能靠多輸幾格左右比分。 */
+const selfSt = A.normalize({
+  players:{ 0:'甲1', 1:'乙2', 2:'丙3' },
+  markets:{
+    w:{ title:'誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家',
+        options:{ p0:{order:0, odds:1.95}, p1:{order:1, odds:1.95} } },
+    b:{ title:'大/小', category:'binary', matchNo:'3-1', banker:'莊家',
+        options:{ x:{label:'大', order:0, odds:2.04}, y:{label:'小', order:1, odds:1.69} } },
+    o:{ title:'單/雙', category:'binary', matchNo:'3-1', banker:'莊家',
+        options:{ u:{label:'單', order:0, odds:1.62}, v:{label:'雙', order:1, odds:2.15} } },
+    n:{ title:'誰獲勝', category:'binary', matchNo:'3-2', banker:'莊家',
+        options:{ p2:{order:0, odds:1.95}, q:{order:1, odds:1.95} } },
+    pre:{ title:'最後總冠軍', category:'multi', banker:'莊家',
+          options:{ p0:{order:0, odds:12.8}, p1:{order:1, odds:12.8} } },
+  },
+});
+const S = id => selfSt.markets.find(x=>x.id === id);
+ok(A.isBannedBettor(selfSt, S('w'), '甲1', 'p0') === null, '★ 可以押自己獲勝');
+ok(A.isBannedBettor(selfSt, S('w'), '甲1', 'p1').banned, '★ 不能押對手獲勝');
+ok(A.isBannedBettor(selfSt, S('w'), '甲1', 'p1').reason.includes('只能押自己獲勝'), '提示說明只能押自己');
+ok(A.isBannedBettor(selfSt, S('b'), '甲1', 'x').banned, '★ 不能押自己場次的大');
+ok(A.isBannedBettor(selfSt, S('b'), '甲1', 'y').banned, '★ 不能押自己場次的小');
+ok(A.isBannedBettor(selfSt, S('o'), '甲1', 'u').banned, '★ 不能押自己場次的單');
+ok(A.isBannedBettor(selfSt, S('o'), '甲1', 'v').banned, '★ 不能押自己場次的雙');
+ok(A.isBannedBettor(selfSt, S('b'), '甲1', 'x').reason.includes('比分盤'), '比分盤的提示文字不同');
+ok(A.isBannedBettor(selfSt, S('w'), '乙2', 'p1') === null, '對手也可以押自己獲勝');
+ok(A.isBannedBettor(selfSt, S('w'), '乙2', 'p0').banned, '對手不能押甲獲勝');
+ok(A.isBannedBettor(selfSt, S('n'), '甲1', 'p2') === null, '別人的場次照押');
+ok(A.isBannedBettor(selfSt, S('pre'), '甲1', 'p0') === null, '賽前盤照押（含押自己奪冠）');
+ok(A.isBannedBettor(selfSt, S('w'), '丙3', 'p0') === null, '沒上場的人不受限');
+ok(A.isBannedBettor(selfSt, S('w'), '甲1').banned, '省略選項時回報最嚴格的情況');
+ok(A.allowedSelfOption(selfSt, S('w'), '甲1') === 'p0', 'allowedSelfOption 指出可押的選項');
+ok(A.allowedSelfOption(selfSt, S('b'), '甲1') === null, '比分盤沒有可押的選項');
+ok(A.allowedSelfOption(selfSt, S('w'), '丙3') === null, '非參賽者沒有特例');
+
 ok(A.isBannedBettor(banSt, M('w'), '小明').banned, '選手不能押自己的誰獲勝');
 ok(A.isBannedBettor(banSt, M('b'), '小明').banned, '同場的大小也擋');
 ok(A.isBannedBettor(banSt, M('o'), '小明') === null, '別人的場次可以押');
