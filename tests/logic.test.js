@@ -261,6 +261,44 @@ ok(A.isBannedBettor(banSt, M('w'), '路人') === null, '非選手不受限');
 ok(A.isBannedBettor(banSt, M('w'), '莊家').banned, '莊家不能押自己的盤');
 ok(A.isBannedBettor(banSt, M('w'), '') === null, '空暱稱不觸發禁押');
 
+/* ★ 待定盤的佔位選項不代表任何人。
+   誰獲勝盤在指定參賽者前選項是 p0/p1，若拿它們認人，名單前兩位會被
+   誤判成每一場的參賽者而全面禁押，其他 14 位則完全不受限。 */
+const pendSt = A.normalize({
+  players:{ 0:'甲', 1:'乙', 2:'丙' },
+  markets:{
+    w1:{ title:'誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家',
+         pendingPlayers:true, locked:true,
+         options:{ p0:{order:0, odds:1.95}, p1:{order:1, odds:1.95} } },
+    b1:{ title:'大/小', category:'binary', matchNo:'3-1', banker:'莊家',
+         options:{ x:{label:'大', order:0, odds:2.04}, y:{label:'小', order:1, odds:1.69} } },
+    w2:{ title:'誰獲勝', category:'binary', matchNo:'3-2', banker:'莊家',
+         pendingPlayers:true, locked:true,
+         options:{ p0:{order:0, odds:1.95}, p1:{order:1, odds:1.95} } },
+  },
+});
+ok(A.matchNosOfPlayer(pendSt, 0).length === 0, '★ 待定盤不讓名單第 1 位被誤判為參賽者');
+ok(A.matchNosOfPlayer(pendSt, 1).length === 0, '★ 名單第 2 位同樣不受影響');
+ok(A.isBannedBettor(pendSt, pendSt.markets.find(m=>m.id==='b1'), '甲') === null,
+   '★ 參賽者未定時，名單第 1 位可以押該場的大小盤');
+
+// 指定參賽者之後才開始生效
+const assigned = A.normalize({
+  players:{ 0:'甲', 1:'乙', 2:'丙' },
+  markets:{
+    w1:{ title:'誰獲勝', category:'binary', matchNo:'3-1', banker:'莊家',
+         options:{ p1:{order:0, odds:1.95}, p2:{order:1, odds:1.95} } },
+    b1:{ title:'大/小', category:'binary', matchNo:'3-1', banker:'莊家',
+         options:{ x:{label:'大', order:0, odds:2.04}, y:{label:'小', order:1, odds:1.69} } },
+  },
+});
+ok(A.matchNosOfPlayer(assigned, 1).join() === '3-1', '指定後乙被認定為 3-1 的參賽者');
+ok(A.matchNosOfPlayer(assigned, 0).length === 0, '沒上場的甲不受限');
+ok(A.isBannedBettor(assigned, assigned.markets.find(m=>m.id==='b1'), '乙').banned,
+   '指定後乙不能押 3-1 的大小盤');
+ok(A.isBannedBettor(assigned, assigned.markets.find(m=>m.id==='b1'), '甲') === null,
+   '甲照常可以押 3-1');
+
 // 暱稱帶選手編號
 ok(A.sameNickname('小明', '小明7'),   '名單無編號 vs 下注帶編號 → 同一人');
 ok(A.sameNickname('小明7', '小明 7'), '空白與分隔符不影響');

@@ -781,12 +781,17 @@ function playerIndexByName(state, name){
   return hits.length === 1 ? hits[0] : -1;   // 有歧義就不猜
 }
 
-// 這位選手參賽的所有賽事編號
+/* 這位選手參賽的所有賽事編號。
+
+   待定的盤要跳過 —— 參賽者還沒指定時選項是佔位用的 p0/p1，不代表任何人。
+   不跳過的話，名單前兩位會被誤判成「每一場的參賽者」而全面禁押，
+   其他人則完全不受限。 */
 function matchNosOfPlayer(state, playerIndex){
   if(playerIndex < 0) return [];
   const optId = 'p' + playerIndex;
   const set = new Set();
   state.markets.forEach(m=>{
+    if(m.pendingPlayers) return;
     if(m.matchNo && m.options.some(o => o.id === optId)) set.add(m.matchNo);
   });
   return [...set];
