@@ -18,6 +18,8 @@ Thumbs.db
 賽果備份-*.json
 賽果報表-*.csv
 備份-*.json
+第三屆開賽前備份-*.json
+*開賽前備份-*.json
 
 # 舊版原型
 骰俠吹牛王-投注站.html.html
