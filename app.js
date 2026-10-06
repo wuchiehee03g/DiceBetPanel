@@ -11,8 +11,8 @@
 
 /* 每屆換一個資料節點：舊屆的注單與賽果原封留在原節點，誤按重置也傷不到。
    辦下一屆時改這兩行，再把新節點加進 database.rules.json 即可。 */
-const TOURNAMENT_NAME = '第三屆';
-const DB_PATH        = 'diceLiarKingState3';   // 第二屆在 diceLiarKingState，已封存唯讀
+const TOURNAMENT_NAME = '第四屆';
+const DB_PATH        = 'diceLiarKingState4';   // 第二屆 diceLiarKingState、第三屆 diceLiarKingState3，皆已封存唯讀
 const PLAYER_COUNT   = 16;
 const DEFAULT_ODDS   = 2;       // 新選項的預設賠率（1:1 平賭）
 /* 定價黏性：相當於莊家先押多少錢在自己開的價上。
