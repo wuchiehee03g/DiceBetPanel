@@ -251,17 +251,24 @@ function renderOpenAllPanel(){
   const missingPre = PRE_MARKETS.filter(m=>!haveTitle.has(m.title));
   const total = missingPre.length + missing.length * 3;
 
+  const hasPre = state.markets.some(m => !m.matchNo && PRE_MARKET_SIM_KEY[m.title]);
+  const repriceBox = hasPre ? `
+    <p class="form-hint" style="margin-top:10px;">
+      名單填好或改過之後，按這裡讓<b>賽前盤</b>依名單與歷屆戰績逐人重新開價。
+      已成立的注單鎖著原本的賠率，不受影響。</p>
+    <button type="button" id="repricePreBtn">依名單重新定價賽前盤</button>` : '';
+
   if(total === 0){
     return `<div class="panel"><h2>${esc(TOURNAMENT_NAME)}全部盤口</h2>
       <p class="form-hint">5 個賽前盤與 11 場單挑的盤都已開好，共 38 個。
-        參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p></div>`;
+        參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p>${repriceBox}</div>`;
   }
   return `<div class="panel">
     <h2>一次建立${esc(TOURNAMENT_NAME)}全部盤口</h2>
     <div class="form-col" style="max-width:460px;">
       <p class="form-hint">
         ${missingPre.length ? `還沒開的<b>賽前盤</b>：<b>${missingPre.map(m=>esc(m.title)).join('、')}</b>
-          （${missingPre.length} 個，各 16 個選項 @ ${MULTI_ODDS.toFixed(2)}x）<br><br>` : ''}
+          （${missingPre.length} 個，各 16 個選項，依名單與歷屆戰績逐人開價）<br><br>` : ''}
         ${missing.length ? `還沒開的<b>單挑場次</b>：<b>${missing.map(m=>esc(m.id)).join('、')}</b>
           （${missing.length} 場，共 ${missing.length*3} 個盤）<br><br>` : ''}
         <b>賽前盤與大小／單雙</b>會直接開放收注 —— 血格機率與誰上場無關。<br>
@@ -271,6 +278,7 @@ function renderOpenAllPanel(){
       </p>
       <input id="allBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
       <button type="button" id="openAllBtn">建立這 ${total} 個盤</button>
+      ${repriceBox}
     </div>
   </div>`;
 }
@@ -378,17 +386,17 @@ function matchOddsPreview(bigMin, items){
   return `<table class="ledger">
     <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th><th>定價</th></tr></thead>
     <tbody>
-      ${row('誰獲勝（各方）', 0.5, DUEL_WIN_ODDS, '自動調')}
+      ${row('誰獲勝（實力相當時）', 0.5, DUEL_WIN_ODDS, '自動調')}
       ${row('大', bs.big,   oddsFromProb(bs.big,   S), '固定')}
       ${row('小', bs.small, oddsFromProb(bs.small, S), '固定')}
       ${row('單', oe.odd,   oddsFromProb(oe.odd,   S), '固定')}
       ${row('雙', oe.even,  oddsFromProb(oe.even,  S), '固定')}
     </tbody></table>
     <p class="form-hint" style="margin-top:6px;">
-      誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價、自動調價（強弱靠錢流修正），
-      水僅 <b>+${winMargin.toFixed(1)}%</b><br>
+      誰獲勝依兩人的歷屆實力分數各自開價（新人視為中等），水 <b>+${winMargin.toFixed(1)}%</b>，
+      再依下注自動調價<br>
       大小單雙 +${((S-1)*100).toFixed(0)}% 水、<b>固定賠率</b>（分布是算出來的，錢流不帶資訊）
-      ${items ? '<br><b>這場有道具卡</b>，落後方能用卡翻盤讓比賽變近，分布已計入偏向小分' : ''}
+      ${items && USE_ITEM_CARD_MODEL ? '<br><b>這場有道具卡</b>，落後方能用卡翻盤讓比賽變近，分布已計入偏向小分' : ''}
     </p>`;
 }
 
@@ -1072,6 +1080,8 @@ function attachHandlers(){
   if(matchBtn) matchBtn.onclick = createMatch;
   const openAllBtn = document.getElementById('openAllBtn');
   if(openAllBtn) openAllBtn.onclick = openAllDuels;
+  const repricePreBtn = document.getElementById('repricePreBtn');
+  if(repricePreBtn) repricePreBtn.onclick = repricePreMarkets;
 
   // 調整黏性（或選項數）時即時更新體感提示
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
@@ -1284,6 +1294,34 @@ async function resetPlayers(){
   }catch(e){ showToast('重設失敗：' + String(e).slice(0,60)); }
 }
 
+/* 賽前盤依目前名單重新開價：模擬整個賽程，寫回每個選項的初始賠率。
+   自動調價以初始賠率為先驗，所以掛牌價會跟著變；已成立的注單鎖著原價。 */
+async function repricePreMarkets(){
+  const odds = preMarketOdds(state.players);
+  const pres = state.markets.filter(m => !m.matchNo && odds[m.title]);
+  if(!pres.length){ showToast('還沒有賽前盤'); return; }
+  const champ = odds['最後總冠軍'];
+  const top = state.players.map((p,i)=>({ p, o: champ[i] })).sort((a,b)=>a.o-b.o).slice(0,4);
+  if(!confirm(
+    `依目前名單重新定價 ${pres.length} 個賽前盤。\n\n` +
+    `總冠軍前四熱門：\n${top.map(x=>`${x.p}　${x.o.toFixed(2)}x`).join('\n')}\n\n` +
+    `已成立的注單不受影響。`
+  )) return;
+  const paths = {};
+  pres.forEach(m=>{
+    m.options.forEach(o=>{
+      const i = Number(String(o.id).replace(/^p/, ''));
+      if(Number.isInteger(i) && odds[m.title][i] != null){
+        paths[`markets/${m.id}/options/${o.id}/odds`] = odds[m.title][i];
+      }
+    });
+  });
+  try{
+    await db.ref(DB_PATH).update(paths);
+    showToast('賽前盤已依名單重新定價');
+  }catch(e){ showToast('定價失敗：' + String(e).slice(0,60)); }
+}
+
 async function openAllDuels(){
   const banker = (document.getElementById('allBanker').value || '').trim();
   if(!banker){ showToast('請輸入莊家名字'); return; }
@@ -1293,7 +1331,7 @@ async function openAllDuels(){
 
   const duel = buildAllDuelMarkets({ banker });
   if(duel.error){ showToast(duel.error); return; }
-  const pre = buildPreMarkets({ banker });
+  const pre = buildPreMarkets({ banker, players: state.players });
   if(pre.error){ showToast(pre.error); return; }
 
   // 只補缺的，已存在的一律不動
@@ -1327,6 +1365,7 @@ async function createMatch(){
   const bi = parseInt(document.getElementById('matchB').value, 10);
   const built = buildMatchMarkets({
     matchNo,
+    players: state.players,
     playerAIndex: ai,
     playerBIndex: bi,
     banker:  document.getElementById('matchBanker').value,
@@ -1345,9 +1384,10 @@ async function createMatch(){
     `建立 ${matchNo}${bm?'　'+bm.name:''}\n` +
     `${state.players[ai]} vs ${state.players[bi]}\n\n` +
     `會開三個盤：誰獲勝、結束比分大/小、結束比分單/雙\n` +
-    `誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價（水 +${((2/DUEL_WIN_ODDS-1)*100).toFixed(1)}%）\n` +
+    `誰獲勝依歷屆戰績開價：${state.players[ai]} ${built.markets[0].options['p'+ai].odds.toFixed(2)}x、` +
+    `${state.players[bi]} ${built.markets[0].options['p'+bi].odds.toFixed(2)}x（水 +${((DUEL_WIN_OVERROUND-1)*100).toFixed(0)}%）\n` +
     `結束比分依真實機率 + ${((SCORE_OVERROUND-1)*100).toFixed(0)}% 抽水` +
-    (bm && bm.items ? `\n\n這場有道具卡，血格分布已計入偏向小分` : '')
+    (bm && bm.items && USE_ITEM_CARD_MODEL ? `\n\n這場有道具卡，血格分布已計入偏向小分` : '')
   )) return;
 
   try{
@@ -1415,12 +1455,14 @@ async function setParticipants(marketId){
   }
   const ai = parseInt(document.querySelector(`[data-pp-a="${marketId}"]`).value, 10);
   const bi = parseInt(document.querySelector(`[data-pp-b="${marketId}"]`).value, 10);
-  const built = participantOptions(market, ai, bi);
+  const built = participantOptions(market, ai, bi, state.players);
   if(built.error){ showToast(built.error); return; }
+  const oa = built.options['p'+ai].odds, ob = built.options['p'+bi].odds;
 
   if(!confirm(
     `${market.matchNo} 的對戰組合設為：\n\n${state.players[ai]}　vs　${state.players[bi]}\n\n` +
-    `確定後這個盤會開放下注（賠率 ${market.options[0].odds.toFixed(2)}x 同價）。`
+    `依歷屆戰績開價：${state.players[ai]} ${oa.toFixed(2)}x、${state.players[bi]} ${ob.toFixed(2)}x\n` +
+    `確定後這個盤會開放下注，之後依下注情況自動調價。`
   )) return;
 
   try{
