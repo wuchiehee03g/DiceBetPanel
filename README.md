@@ -1,6 +1,6 @@
 # 骰俠吹牛王 · 投注站
 
-第三屆骰俠吹牛王賽事的網頁版投注器。全部盤口都是**莊家盤**：由指定的莊家開價、
+第四屆骰俠吹牛王賽事的網頁版投注器。全部盤口都是**莊家盤**：由指定的莊家開價、
 承擔賠付風險，賠率會隨大家的下注金額自動調整。
 
 ## 兩個網址
@@ -162,8 +162,9 @@ diceLiarKingState/
 | 屆數 | 節點 | 狀態 |
 |---|---|---|
 | 第二屆 | `diceLiarKingState` | 已封存，規則設為**唯讀**（38 盤、285 筆注單） |
-| 第三屆 | `diceLiarKingState3` | 使用中 |
-| 測試 | `diceLiarKingState3_TEST` | `tests/e2e.test.js` 用的丟棄節點 |
+| 第三屆 | `diceLiarKingState3` | 已封存，規則設為**唯讀**（38 盤、114 筆注單） |
+| 第四屆 | `diceLiarKingState4` | 使用中 |
+| 測試 | `diceLiarKingState4_TEST` | `tests/e2e.test.js` 用的丟棄節點 |
 
 辦下一屆：改 `app.js` 開頭的 `TOURNAMENT_NAME` 與 `DB_PATH`，把新節點加進
 `database.rules.json`（舊節點改成 `".write": false` 封存），
