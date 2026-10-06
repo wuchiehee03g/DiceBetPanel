@@ -148,9 +148,9 @@ ok(Object.keys(po.options).join() === 'p4,p9', '產生 p4 / p9 兩個選項');
 ok(Object.values(po.options).every(o=> o.odds === 1.95), '沒給名單時沿用原本的賠率');
 const roster = ['小葉1','趙趙2','吳杰3','訪軒4','Sean5','叔明6','孟傑7','小羊8',
                 'Wei9','阿捷10','顧11','凱立12','國國13','書瑋14','謬15','子憔16'];
-const pr = A.participantOptions(fakeWin, 4, 5, roster);   // Sean vs 叔明
-ok(pr.options.p4.odds > pr.options.p5.odds, '給了名單就依實力開價：叔明較熱門');
-near(1/pr.options.p4.odds + 1/pr.options.p5.odds, A.DUEL_WIN_OVERROUND, 0.01, '兩邊合計抽水 ~8%');
+const pr = A.participantOptions(fakeWin, 5, 15, roster);   // 叔明 vs 子憔
+ok(pr.options.p5.odds < pr.options.p15.odds, '給了名單就依實力開價：叔明較熱門');
+near(1/pr.options.p5.odds + 1/pr.options.p15.odds, A.DUEL_WIN_OVERROUND, 0.01, '兩邊合計抽水 ~8%');
 
 /* ============================================================
    7b. 實力分數與賽程模擬
