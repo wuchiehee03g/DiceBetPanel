@@ -966,6 +966,18 @@ function duplicateNumbers(state){
   return dup;
 }
 
+/* 這筆注單是不是「我」下的 ------------------------------------------
+   原本只認裝置上的 bettorId，換手機、從 LINE 內建瀏覽器改用 Safari、
+   無痕模式或清掉瀏覽器資料後，「我的下注」就一筆都看不到。
+   所以暱稱對得上（容忍尾端編號，見 sameNickname）也算是自己的。
+   注單本來就是公開的，用暱稱查不會多洩漏什麼。
+   ------------------------------------------------------------------ */
+function isMyBet(bet, me){
+  if(!bet || !me) return false;
+  if(me.id && bet.bettorId === me.id) return true;
+  return !!(me.name && bet.name && sameNickname(bet.name, me.name));
+}
+
 /* 這個暱稱對應到第幾位選手；認不出來回 -1。
 
    認人順序：
@@ -1348,7 +1360,7 @@ if(typeof module !== 'undefined' && module.exports){
     effectiveMaxBet, validateBetAmount, liabilityIfBetPlaced, checkLiability, liabilityUsage,
     bettorStakeOn, checkPerBettor, isBannedBettor, allowedSelfOption,
     playerIndexByName, matchNosOfPlayer,
-    splitNickname, sameNickname, playerNumbers, duplicateNumbers,
+    splitNickname, sameNickname, isMyBet, playerNumbers, duplicateNumbers,
     BASELINE_FIELDS, snapshotMarkets, baselineMarkets, baselineDiff, inScope,
     restoreConfigPaths, clearBetsPaths, deleteScopePaths, resetScopes,
     reportByBettor, reportByCategory, reportByTime, bankerExposure
