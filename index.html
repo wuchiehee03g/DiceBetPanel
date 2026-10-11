@@ -173,7 +173,7 @@ function render(){
 }
 
 function renderIdentity(){
-  const mine = state.bets.filter(b => b.bettorId === me.id);
+  const mine = state.bets.filter(b => isMyBet(b, me));
   const staked = mine.reduce((s,b)=> s + b.amount, 0);
   let settledProfit = 0, pending = 0;
   mine.forEach(b=>{
@@ -213,7 +213,7 @@ function renderSummary(){
 }
 
 function renderTabs(){
-  const mineCount = state.bets.filter(b=>b.bettorId === me.id).length;
+  const mineCount = state.bets.filter(b=>isMyBet(b, me)).length;
   const openCount = state.markets.filter(m=>!m.settled && !m.locked).length;
   const groups = [
     { key:'bet',     label:`投注${openCount ? ' ('+openCount+')' : ''}` },
@@ -276,7 +276,7 @@ function renderMatchBox(mb){
   const open = !foldedKey(key, false);        // 場次預設展開
   const staked = mb.markets.reduce((s,m)=> s + marketTotal(pools, m), 0);
   const mine = state.bets
-    .filter(b => b.bettorId === me.id && mb.markets.some(m=>m.id === b.marketId))
+    .filter(b => isMyBet(b, me) && mb.markets.some(m=>m.id === b.marketId))
     .reduce((s,b)=> s + b.amount, 0);
   const allSettled = mb.markets.every(m=>m.settled);
   const anyLocked  = mb.markets.some(m=>m.locked && !m.settled);
@@ -309,7 +309,7 @@ function renderMarketCard(market){
   const rows = market.options.map((opt, idx)=>{
     const pool  = poolOf(pools, market.id, opt.id);
     const myAmt = state.bets
-      .filter(b => b.bettorId === me.id && b.marketId === market.id && b.optionId === opt.id)
+      .filter(b => isMyBet(b, me) && b.marketId === market.id && b.optionId === opt.id)
       .reduce((s,b)=> s + b.amount, 0);
     const isWinner = market.settled && opt.id === market.winnerId;
     const lo = liveOdds(pools, market, opt.id);
@@ -356,7 +356,7 @@ function renderMarketCard(market){
 
   const fold = isFolded(market);
   const myTotal = state.bets
-    .filter(b => b.bettorId === me.id && b.marketId === market.id)
+    .filter(b => isMyBet(b, me) && b.marketId === market.id)
     .reduce((s,b)=> s + b.amount, 0);
 
   return `
@@ -390,8 +390,8 @@ function renderLedger(market){
   const rows = all.map(b=>{
     const o = betOutcome(state, pools, b);
     const opt = market.options.find(x=>x.id === b.optionId);
-    return `<tr class="${b.bettorId===me.id?'is-me':''}">
-      <td>${esc(b.name)}${b.bettorId===me.id?' <span style="color:var(--gold-bright)">(我)</span>':''}</td>
+    return `<tr class="${isMyBet(b, me)?'is-me':''}">
+      <td>${esc(b.name)}${isMyBet(b, me)?' <span style="color:var(--gold-bright)">(我)</span>':''}</td>
       <td>${esc(optionLabel(state, market, opt))}</td>
       <td class="num">${betOdds(b).toFixed(2)}x</td>
       <td class="num">$${fmt(b.amount)}</td>
@@ -404,10 +404,10 @@ function renderLedger(market){
 }
 
 function renderMyBets(){
-  const mine = state.bets.filter(b => b.bettorId === me.id).slice().reverse();
+  const mine = state.bets.filter(b => isMyBet(b, me)).slice().reverse();
   if(mine.length === 0){
     return `<div class="empty-note">你還沒有下注。<br>
-      這一頁只看得到「這台裝置」下的注 —— 換手機或清掉瀏覽器資料就會看不到，但注單本身仍留在帳本裡。</div>`;
+      這一頁依「這台裝置」與上方的暱稱找你的注單 —— 換了手機或瀏覽器，把暱稱打成跟下注時一樣就看得到。</div>`;
   }
   let staked = 0, pending = 0, settledProfit = 0;
   const rows = mine.map(b=>{
@@ -627,9 +627,13 @@ async function placeBet(marketId, optionId){
   }
 }
 
+let nameRenderTimer = null;
 document.getElementById('meName').addEventListener('input', (e)=>{
   me.name = e.target.value.trim();
   try{ localStorage.setItem(NAME_KEY, me.name); }catch(err){}
+  // 暱稱也用來找「我的下注」，打完字就重畫
+  clearTimeout(nameRenderTimer);
+  nameRenderTimer = setTimeout(render, 400);
 });
 
 boot();

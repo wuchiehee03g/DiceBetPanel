@@ -596,6 +596,15 @@ ok(JSON.stringify(rules[A.DB_PATH + '_TEST']).replace(/_TEST/g, '') ===
    JSON.stringify(rules[A.DB_PATH]),
    '★ 測試節點套用與正式節點相同的驗證規則');
 
+section('我的下注：裝置或暱稱');
+const myB = { bettorId:'dev1', name:'小葉1' };
+ok(A.isMyBet(myB, { id:'dev1', name:'' }), '同一台裝置認得出來');
+ok(A.isMyBet(myB, { id:'dev2', name:'小葉1' }), '換裝置但暱稱相同也認得出來');
+ok(A.isMyBet(myB, { id:'dev2', name:'小葉' }), '暱稱漏打編號也認得出來');
+ok(!A.isMyBet(myB, { id:'dev2', name:'小葉2' }), '編號不同不算');
+ok(!A.isMyBet(myB, { id:'dev2', name:'' }), '換裝置又沒填暱稱就認不出來');
+ok(!A.isMyBet({ bettorId:'x', name:'路人甲' }, { id:'y', name:'路人乙' }), '不同暱稱不算');
+
 console.log(`\n${'='.repeat(52)}`);
 console.log(`通過 ${pass} 項，失敗 ${fail} 項`);
 console.log('='.repeat(52));
