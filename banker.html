@@ -251,17 +251,24 @@ function renderOpenAllPanel(){
   const missingPre = PRE_MARKETS.filter(m=>!haveTitle.has(m.title));
   const total = missingPre.length + missing.length * 3;
 
+  const hasPre = state.markets.some(m => !m.matchNo && PRE_MARKET_SIM_KEY[m.title]);
+  const repriceBox = hasPre ? `
+    <p class="form-hint" style="margin-top:10px;">
+      名單填好或改過之後，按這裡讓<b>賽前盤</b>依名單與歷屆戰績逐人重新開價。
+      已成立的注單鎖著原本的賠率，不受影響。</p>
+    <button type="button" id="repricePreBtn">依名單重新定價賽前盤</button>` : '';
+
   if(total === 0){
     return `<div class="panel"><h2>${esc(TOURNAMENT_NAME)}全部盤口</h2>
       <p class="form-hint">5 個賽前盤與 11 場單挑的盤都已開好，共 38 個。
-        參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p></div>`;
+        參賽者待定的「誰獲勝」盤會在下面各自顯示指定表單。</p>${repriceBox}</div>`;
   }
   return `<div class="panel">
     <h2>一次建立${esc(TOURNAMENT_NAME)}全部盤口</h2>
     <div class="form-col" style="max-width:460px;">
       <p class="form-hint">
         ${missingPre.length ? `還沒開的<b>賽前盤</b>：<b>${missingPre.map(m=>esc(m.title)).join('、')}</b>
-          （${missingPre.length} 個，各 16 個選項 @ ${MULTI_ODDS.toFixed(2)}x）<br><br>` : ''}
+          （${missingPre.length} 個，各 ${PLAYER_COUNT} 個選項，依名單與歷屆戰績逐人開價）<br><br>` : ''}
         ${missing.length ? `還沒開的<b>單挑場次</b>：<b>${missing.map(m=>esc(m.id)).join('、')}</b>
           （${missing.length} 場，共 ${missing.length*3} 個盤）<br><br>` : ''}
         <b>賽前盤與大小／單雙</b>會直接開放收注 —— 血格機率與誰上場無關。<br>
@@ -271,6 +278,7 @@ function renderOpenAllPanel(){
       </p>
       <input id="allBanker" placeholder="莊家名字（必填）" maxlength="20" value="莊家">
       <button type="button" id="openAllBtn">建立這 ${total} 個盤</button>
+      ${repriceBox}
     </div>
   </div>`;
 }
@@ -378,17 +386,17 @@ function matchOddsPreview(bigMin, items){
   return `<table class="ledger">
     <thead><tr><th>選項</th><th class="num">機率</th><th class="num">賠率</th><th>定價</th></tr></thead>
     <tbody>
-      ${row('誰獲勝（各方）', 0.5, DUEL_WIN_ODDS, '自動調')}
+      ${row('誰獲勝（實力相當時）', 0.5, DUEL_WIN_ODDS, '自動調')}
       ${row('大', bs.big,   oddsFromProb(bs.big,   S), '固定')}
       ${row('小', bs.small, oddsFromProb(bs.small, S), '固定')}
       ${row('單', oe.odd,   oddsFromProb(oe.odd,   S), '固定')}
       ${row('雙', oe.even,  oddsFromProb(oe.even,  S), '固定')}
     </tbody></table>
     <p class="form-hint" style="margin-top:6px;">
-      誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價、自動調價（強弱靠錢流修正），
-      水僅 <b>+${winMargin.toFixed(1)}%</b><br>
+      誰獲勝依兩人的歷屆實力分數各自開價（新人視為中等），水 <b>+${winMargin.toFixed(1)}%</b>，
+      再依下注自動調價<br>
       大小單雙 +${((S-1)*100).toFixed(0)}% 水、<b>固定賠率</b>（分布是算出來的，錢流不帶資訊）
-      ${items ? '<br><b>這場有道具卡</b>，落後方能用卡翻盤讓比賽變近，分布已計入偏向小分' : ''}
+      ${items && USE_ITEM_CARD_MODEL ? '<br><b>這場有道具卡</b>，落後方能用卡翻盤讓比賽變近，分布已計入偏向小分' : ''}
     </p>`;
 }
 
@@ -415,7 +423,7 @@ function renderCreatePanel(){
       <div class="form-col">
         <h3>3. 選項</h3>
         ${newCategory === 'multi' ? `
-          <p class="form-hint">自動使用 <b>16 人名單</b>，標籤會跟著名單同步。</p>
+          <p class="form-hint">自動使用 <b>${PLAYER_COUNT} 人名單</b>，標籤會跟著名單同步。</p>
         ` : newCategory === 'binary' ? `
           <div class="radio-row">
             <label><input type="radio" name="binsrc" value="roster" ${binarySource==='roster'?'checked':''}> 從名單挑兩位</label>
@@ -832,7 +840,7 @@ function renderGuideTab(){
     <h2>⑥ 賽前檢查</h2>
     <table class="ledger">
       <tbody>
-        <tr><td>${unnamed === 0 ? '✅' : '⚠️'} 16 位選手改成真實姓名</td>
+        <tr><td>${unnamed === 0 ? '✅' : '⚠️'} ${PLAYER_COUNT} 位選手改成真實姓名</td>
             <td class="num">${unnamed === 0 ? '已完成' : `還有 ${unnamed} 位是預設名`}</td></tr>
         <tr><td>${champ && champ.options.some(o=>o.odds !== champ.options[0].odds) ? '✅' : '⚠️'} 冠軍盤依實力差別定價</td>
             <td class="num">${champ ? (champ.options.some(o=>o.odds !== champ.options[0].odds) ? '已分級' : '目前全部同價') : '尚無盤口'}</td></tr>
@@ -860,7 +868,7 @@ function renderSettingsTab(){
     <h2>設定與備份</h2>
     <div class="panel-grid">
       <div>
-        <h3>16 位玩家名單</h3>
+        <h3>${PLAYER_COUNT} 位玩家名單</h3>
         <div id="playerEditor">
           ${state.players.map((p,i)=>`<input data-pidx="${i}" value="${esc(p)}" maxlength="20">`).join('')}
         </div>
@@ -896,7 +904,7 @@ function renderSettingsTab(){
           const warn = [];
           if(placeholder > 0) warn.push(
             `還有 <b>${placeholder}</b> 位是預設名「選手N」。這些佔位名<b>本身帶編號</b>，
-             會跟真名的編號撞號 —— 請把 16 位一次改完，不要只改一半。`);
+             會跟真名的編號撞號 —— 請把 ${PLAYER_COUNT} 位一次改完，不要只改一半。`);
           if(dup.length) warn.push(
             `<b>編號重複</b>：${dup.map(d=>`${d.num} 號（${d.indexes.map(i=>esc(state.players[i])).join(' / ')}）`).join('、')}
              —— 認人會有歧義，這些人不會被擋。`);
@@ -907,7 +915,7 @@ function renderSettingsTab(){
           const barred = rows.filter(r=>r.ms.length);
 
           return (warn.length ? `<p class="warn-line">⚠️ ${warn.join('<br><br>')}</p>` :
-                   `<p class="ok-line">✅ 16 位都有不重複的編號，靠編號認人沒問題。</p>`)
+                   `<p class="ok-line">✅ ${PLAYER_COUNT} 位都有不重複的編號，靠編號認人沒問題。</p>`)
             + `<div class="table-scroll"><table class="ledger">
             <thead><tr><th>選手</th><th class="num">編號</th><th>受限的場次</th></tr></thead>
             <tbody>${rows.map(r=>`<tr>
@@ -1046,7 +1054,7 @@ function renderBaselinePanel(){
 
       <div class="form-col">
         <h3>⑤ 只重設玩家名單</h3>
-        <button type="button" class="danger-btn" id="resetPlayersBtn">名單改回「選手1~16」</button>
+        <button type="button" class="danger-btn" id="resetPlayersBtn">名單改回「選手1~${PLAYER_COUNT}」</button>
         <p class="form-hint">只動 16 個名字，盤口與注單都不受影響。
           多選項盤的選項標籤跟著名單，所以改名之後那些盤會自動顯示新名字。</p>
       </div>
@@ -1072,6 +1080,8 @@ function attachHandlers(){
   if(matchBtn) matchBtn.onclick = createMatch;
   const openAllBtn = document.getElementById('openAllBtn');
   if(openAllBtn) openAllBtn.onclick = openAllDuels;
+  const repricePreBtn = document.getElementById('repricePreBtn');
+  if(repricePreBtn) repricePreBtn.onclick = repricePreMarkets;
 
   // 調整黏性（或選項數）時即時更新體感提示
   const mk = document.getElementById('matchPriorK'), mi = document.getElementById('matchImpact');
@@ -1275,13 +1285,41 @@ async function dropScope(){
 async function resetPlayers(){
   const named = state.players.filter((p,i)=> p !== `選手${i+1}`);
   if(named.length === 0){ showToast('名單已經是預設值'); return; }
-  if(!confirm(`把 ${named.length} 個改過的名字改回「選手1~16」。\n\n` +
+  if(!confirm(`把 ${named.length} 個改過的名字改回「選手1~${PLAYER_COUNT}」。\n\n` +
               `盤口與注單不受影響。要繼續嗎？`)) return;
   await autoBackup();
   try{
     await db.ref(`${DB_PATH}/players`).set(seed().players);
     showToast('名單已重設');
   }catch(e){ showToast('重設失敗：' + String(e).slice(0,60)); }
+}
+
+/* 賽前盤依目前名單重新開價：模擬整個賽程，寫回每個選項的初始賠率。
+   自動調價以初始賠率為先驗，所以掛牌價會跟著變；已成立的注單鎖著原價。 */
+async function repricePreMarkets(){
+  const odds = preMarketOdds(state.players);
+  const pres = state.markets.filter(m => !m.matchNo && odds[m.title]);
+  if(!pres.length){ showToast('還沒有賽前盤'); return; }
+  const champ = odds['最後總冠軍'];
+  const top = state.players.map((p,i)=>({ p, o: champ[i] })).sort((a,b)=>a.o-b.o).slice(0,4);
+  if(!confirm(
+    `依目前名單重新定價 ${pres.length} 個賽前盤。\n\n` +
+    `總冠軍前四熱門：\n${top.map(x=>`${x.p}　${x.o.toFixed(2)}x`).join('\n')}\n\n` +
+    `已成立的注單不受影響。`
+  )) return;
+  const paths = {};
+  pres.forEach(m=>{
+    m.options.forEach(o=>{
+      const i = Number(String(o.id).replace(/^p/, ''));
+      if(Number.isInteger(i) && odds[m.title][i] != null){
+        paths[`markets/${m.id}/options/${o.id}/odds`] = odds[m.title][i];
+      }
+    });
+  });
+  try{
+    await db.ref(DB_PATH).update(paths);
+    showToast('賽前盤已依名單重新定價');
+  }catch(e){ showToast('定價失敗：' + String(e).slice(0,60)); }
 }
 
 async function openAllDuels(){
@@ -1293,7 +1331,7 @@ async function openAllDuels(){
 
   const duel = buildAllDuelMarkets({ banker });
   if(duel.error){ showToast(duel.error); return; }
-  const pre = buildPreMarkets({ banker });
+  const pre = buildPreMarkets({ banker, players: state.players });
   if(pre.error){ showToast(pre.error); return; }
 
   // 只補缺的，已存在的一律不動
@@ -1327,6 +1365,7 @@ async function createMatch(){
   const bi = parseInt(document.getElementById('matchB').value, 10);
   const built = buildMatchMarkets({
     matchNo,
+    players: state.players,
     playerAIndex: ai,
     playerBIndex: bi,
     banker:  document.getElementById('matchBanker').value,
@@ -1345,9 +1384,10 @@ async function createMatch(){
     `建立 ${matchNo}${bm?'　'+bm.name:''}\n` +
     `${state.players[ai]} vs ${state.players[bi]}\n\n` +
     `會開三個盤：誰獲勝、結束比分大/小、結束比分單/雙\n` +
-    `誰獲勝 ${DUEL_WIN_ODDS.toFixed(2)}x 同價（水 +${((2/DUEL_WIN_ODDS-1)*100).toFixed(1)}%）\n` +
+    `誰獲勝依歷屆戰績開價：${state.players[ai]} ${built.markets[0].options['p'+ai].odds.toFixed(2)}x、` +
+    `${state.players[bi]} ${built.markets[0].options['p'+bi].odds.toFixed(2)}x（水 +${((DUEL_WIN_OVERROUND-1)*100).toFixed(0)}%）\n` +
     `結束比分依真實機率 + ${((SCORE_OVERROUND-1)*100).toFixed(0)}% 抽水` +
-    (bm && bm.items ? `\n\n這場有道具卡，血格分布已計入偏向小分` : '')
+    (bm && bm.items && USE_ITEM_CARD_MODEL ? `\n\n這場有道具卡，血格分布已計入偏向小分` : '')
   )) return;
 
   try{
@@ -1415,12 +1455,14 @@ async function setParticipants(marketId){
   }
   const ai = parseInt(document.querySelector(`[data-pp-a="${marketId}"]`).value, 10);
   const bi = parseInt(document.querySelector(`[data-pp-b="${marketId}"]`).value, 10);
-  const built = participantOptions(market, ai, bi);
+  const built = participantOptions(market, ai, bi, state.players);
   if(built.error){ showToast(built.error); return; }
+  const oa = built.options['p'+ai].odds, ob = built.options['p'+bi].odds;
 
   if(!confirm(
     `${market.matchNo} 的對戰組合設為：\n\n${state.players[ai]}　vs　${state.players[bi]}\n\n` +
-    `確定後這個盤會開放下注（賠率 ${market.options[0].odds.toFixed(2)}x 同價）。`
+    `依歷屆戰績開價：${state.players[ai]} ${oa.toFixed(2)}x、${state.players[bi]} ${ob.toFixed(2)}x\n` +
+    `確定後這個盤會開放下注，之後依下注情況自動調價。`
   )) return;
 
   try{
@@ -1617,7 +1659,7 @@ async function doReset(){
     `重置整個賽事會刪除：\n\n` +
     `· ${nMarkets} 個盤口\n` +
     `· ${nBets} 筆注單\n` +
-    (named ? `· 已改過的 ${named} 位玩家姓名（會變回「選手1~16」）\n` : '') +
+    (named ? `· 已改過的 ${named} 位玩家姓名（會變回「選手1~${PLAYER_COUNT}」）\n` : '') +
     `· 全域設定（單筆上限、莊家名單）\n\n` +
     (baseline ? `基準點會保留 —— 重置後可以用「還原配置」把 ${Object.keys(baseline.markets).length} 個盤口長回來。\n\n` : '') +
     `無法復原。確定要繼續嗎？`

@@ -70,7 +70,7 @@ async function load(file, { storage = {}, data, confirmAnswer = true } = {}){
 /* ---------- 測試資料：五個賽前盤 + 3-1 三個盤 ---------- */
 const A = require('../app.js');
 const players = {};
-for(let i = 0; i < 16; i++) players[String(i)] = '選手' + (i + 1);
+for(let i = 0; i < A.PLAYER_COUNT; i++) players[String(i)] = '選手' + (i + 1);
 
 function toDbShape(list){
   const out = {};
@@ -212,7 +212,7 @@ section('一鍵建立全部盤口');
   ok(pushes.length === 38, `送出 38 次 push（實際 ${pushes.length}）`);
   const pre = pushes.filter(x => x.value.category === 'multi');
   ok(pre.length === 5, '其中 5 個是賽前盤');
-  ok(pre.every(x => Object.keys(x.value.options).length === 16), '賽前盤各 16 個選項');
+  ok(pre.every(x => Object.keys(x.value.options).length === A.PLAYER_COUNT), `賽前盤各 ${A.PLAYER_COUNT} 個選項`);
   ok(pre.every(x => x.value.maxBet === 1000 && x.value.maxPerBettor === 5000), '賽前盤上限正確');
   const wins = pushes.filter(x => x.value.title.includes('誰獲勝'));
   ok(wins.length === 11, '11 個誰獲勝盤');

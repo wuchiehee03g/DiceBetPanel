@@ -13,7 +13,7 @@
    辦下一屆時改這兩行，再把新節點加進 database.rules.json 即可。 */
 const TOURNAMENT_NAME = '第四屆';
 const DB_PATH        = 'diceLiarKingState4';   // 第二屆 diceLiarKingState、第三屆 diceLiarKingState3，皆已封存唯讀
-const PLAYER_COUNT   = 16;
+const PLAYER_COUNT   = 12;      // 第四屆起 12 人（第二、三屆是 16 人）
 const DEFAULT_ODDS   = 2;       // 新選項的預設賠率（1:1 平賭）
 /* 定價黏性：相當於莊家先押多少錢在自己開的價上。
    波動大小取決於「單筆上限 ÷ 黏性」的比值，不是上限本身——
@@ -45,19 +45,24 @@ const DEFAULT_BIG_MIN = 3;
 
    · 大小 / 單雙 —— 血格分布是從賽制算出來的，沒有人比公式更懂，
      錢流不帶資訊。用固定賠率（關掉自動調價），莊家穩拿開價時的水。
-   · 誰獲勝 —— 我不知道兩位選手的相對強弱，但下注的人知道，錢流帶資訊。
-     保留自動調價，但黏性要高，避免被隨機的錢推歪。
-   · 總冠軍盤 —— 大家知道上屆前四是誰，錢流帶資訊，維持自動調價。
+   · 誰獲勝 —— 開價依前三屆戰績算出的實力分數（見 PLAYER_RATINGS），
+     再保留自動調價讓錢流修正。
+   · 總冠軍等賽前盤 —— 依實力分數模擬整個賽程，每位選手各自開價。
+
+   第三屆的教訓：誰獲勝一律 1.95 同價、黏性 100,000，大家集中押熱門，
+   熱門幾乎全中，這 11 盤莊家淨賠 67,435；總冠軍 16 人一律 12.80，
+   奪冠的 Sean 被押在 12.5 倍，又賠 17,578。兩者都是「不分強弱同價」。
    -------------------------------------------------------------------- */
-const MULTI_ODDS         = 12.80;   // 多選項盤（16 人名單）每位選手的起始賠率
-const DUEL_WIN_ODDS      = 1.95;    // 單挑「誰獲勝」雙方的起始賠率
+const MULTI_ODDS         = 9.60;    // 賽前盤無名單時的起始賠率（12 人同價，= 1 / (1/12 × 1.25)）
+const DUEL_WIN_ODDS      = 1.85;    // 誰獲勝雙方實力未知時的起始賠率（= 2 / 1.08）
+const DUEL_WIN_OVERROUND = 1.08;    // 誰獲勝的莊家水錢：8%（第三屆只有 2.6%）
+const PRE_OVERROUND      = 1.25;    // 賽前盤的莊家水錢：25%（與上屆 16 × 1/12.8 相同）
 const SCORE_OVERROUND    = 1.08;    // 結束比分盤的莊家抽水：8%
-const DUEL_PRIOR_K       = 100000;  // 誰獲勝的預設黏性（高，抗隨機噪音）
-const DUEL_MAX_LIABILITY = 500000;  // 單挑盤每個選項的賠付上限
-const MULTI_PRIOR_K      = 300000;  // 賽前盤（16 選項）的定價黏性
-const MULTI_MAX_LIABILITY= 500000;  // 賽前盤每個選項的賠付上限
-                                    // 註：黏性拉高後價格幾乎不動，每個人製造的曝險一樣大，
-                                    // 上限必須跟著拉高，否則第 2 個押同一位選手的人就被擋。
+const DUEL_PRIOR_K       = 20000;   // 誰獲勝的預設黏性：一筆 $5,000 把 1.85 推到約 1.54
+                                    // （第三屆 100,000 太黏，四筆滿額注才從 1.95 推到 1.75）
+const DUEL_MAX_LIABILITY = 30000;   // 單挑盤每個選項莊家最多賠 $30,000，超過就擋下這一筆
+const MULTI_PRIOR_K      = 100000;  // 賽前盤（16 選項）的定價黏性：一筆 $1,000 把 12.8 推到約 11.1
+const MULTI_MAX_LIABILITY= 30000;   // 賽前盤每個選項莊家最多賠 $30,000
 
 /* 道具卡對血格分布的影響 ----------------------------------------------
    依規則，道具卡（A 重骰 / K 看牌 / Q 調骰）不是免死金牌，而是**改善那一手
@@ -68,6 +73,10 @@ const MULTI_MAX_LIABILITY= 500000;  // 賽前盤每個選項的賠付上限
    0.60 是中性估計；實戰跑幾場後可以回頭調這個數字。
    -------------------------------------------------------------------- */
 const ITEM_CARD_Q = 0.60;
+/* 但前兩屆 8 場道具戰的實際結果是剩 4、4、1、2、3、3、5、1 —— 大（3 以上）
+   5 場，模型卻說大只有 33%，第四階段的「大」開到 2.77 是送錢。
+   實戰並沒有往小分偏，所以先關掉這個修正，道具戰與無道具戰用同一個分布。 */
+const USE_ITEM_CARD_MODEL = false;
 
 /* 獲勝者剩餘血格的機率分布 ------------------------------------------
    假設雙方實力相當、每手 50/50、每次輸掉一格。比賽打到一方歸零為止，
@@ -118,7 +127,7 @@ function hpDistributionItems(q){
 }
 
 // items=true 時改用道具版分布
-function hpDist(items){ return items ? hpDistributionItems() : hpDistribution(); }
+function hpDist(items){ return (items && USE_ITEM_CARD_MODEL) ? hpDistributionItems() : hpDistribution(); }
 
 function bigSmallProbs(bigMin, items){
   const d = hpDist(items);
@@ -178,6 +187,8 @@ function buildMatchMarkets(opts){
     ? opts.bigMin : DEFAULT_BIG_MIN;
   const items = !!opts.items;
   const winOdds = (typeof opts.winOdds === 'number' && opts.winOdds > 1) ? opts.winOdds : DUEL_WIN_ODDS;
+  const winPair = (opts.players && opts.players[ai] != null && opts.players[bi] != null)
+    ? duelWinOddsPair(opts.players[ai], opts.players[bi]) : [winOdds, winOdds];
   const scoreOverround = (typeof opts.scoreOverround === 'number' && opts.scoreOverround > 1)
     ? opts.scoreOverround : SCORE_OVERROUND;
 
@@ -195,13 +206,13 @@ function buildMatchMarkets(opts){
   const oe = oddEvenProbs(items);
 
   return { markets: [
-    // 誰獲勝：我不知道兩人強弱，讓錢流去修正 → 自動調價，高黏性
+    // 誰獲勝：依實力分數開價，再讓錢流去修正 → 自動調價
     { ...base, autoPrice:true, priorK,
       title:`${matchNo} · 誰獲勝`,
-      desc:`雙方同價開出，會依下注情況自動調整`,
+      desc:`依歷屆戰績開價，會依下注情況自動調整`,
       options: {
-        ['p'+ai]: { order:0, odds: winOdds },
-        ['p'+bi]: { order:1, odds: winOdds },
+        ['p'+ai]: { order:0, odds: winPair[0] },
+        ['p'+bi]: { order:1, odds: winPair[1] },
       }},
     // 大小 / 單雙：分布是算出來的，錢流不帶資訊 → 固定賠率
     { ...base, autoPrice:false, priorK,
@@ -222,11 +233,15 @@ function buildMatchMarkets(opts){
 }
 
 /* ============================================================
-   第二屆賽制：雙敗淘汰，21 場
+   第四屆賽制：12 人雙敗淘汰，19 場
    ------------------------------------------------------------
+   第一階段改成 4 張三人桌取 2（第二、三屆是 16 人、4 張勝部四人桌 + 2 張敗部桌），
+   第二階段起與上屆相同：每張三人桌的第 3 名直接進第二階段的敗部桌。
+
    編號沿用主辦方的格式（1-1、3-5、4-4…），開盤時直接從這裡挑，
    賽事編號才會跟看板一致。
 
+   format 'table3' = 三人桌（取前 2 晉級）
    format 'table4' = 四人桌（取前 2 晉級）
    format 'duel'   = 單挑 1v1
    items  true     = 有道具卡（會改變獲勝者剩餘血格的分布）
@@ -234,22 +249,18 @@ function buildMatchMarkets(opts){
 const PRIZE_SPLIT = { first:0.60, second:0.30, third:0.10 };
 
 const BRACKET = [
-  { stage:1, title:'第一階段 · 常規四人桌', note:'可跳抓，跳抓時輸贏加倍；喊牌較上家大於兩顆時可選擇迴轉。',
+  { stage:1, title:'第一階段 · 常規三人桌', note:'可跳抓，跳抓時輸贏加倍；喊牌較上家大於兩顆時可選擇迴轉。',
     matches:[
-      { id:'1-1', side:'W', name:'勝部 A 桌', format:'table4', from:'抽籤分組',
-        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
-      { id:'1-2', side:'W', name:'勝部 B 桌', format:'table4', from:'抽籤分組',
-        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
-      { id:'1-3', side:'W', name:'勝部 C 桌', format:'table4', from:'抽籤分組',
-        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
-      { id:'1-4', side:'W', name:'勝部 D 桌', format:'table4', from:'抽籤分組',
-        win:'前 2 晉級勝部第二階段', lose:'後 2 掉入敗部' },
-      { id:'1-5', side:'L', name:'敗部 A 桌', format:'table4', from:'1-1、1-2 的敗者',
-        win:'前 2 復活', lose:'後 2 永久淘汰' },
-      { id:'1-6', side:'L', name:'敗部 B 桌', format:'table4', from:'1-3、1-4 的敗者',
-        win:'前 2 復活', lose:'後 2 永久淘汰' },
+      { id:'1-1', side:'W', name:'A 桌', format:'table3', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'第 3 名掉入敗部' },
+      { id:'1-2', side:'W', name:'B 桌', format:'table3', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'第 3 名掉入敗部' },
+      { id:'1-3', side:'W', name:'C 桌', format:'table3', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'第 3 名掉入敗部' },
+      { id:'1-4', side:'W', name:'D 桌', format:'table3', from:'抽籤分組',
+        win:'前 2 晉級勝部第二階段', lose:'第 3 名掉入敗部' },
     ],
-    after:'勝部 8 人、敗部生還 4 人' },
+    after:'勝部 8 人、敗部 4 人' },
 
   { stage:2, title:'第二階段 · 反向揭露四人桌', note:'看得到別人的骰子、看不到自己的；不可跳抓；每次最多加喊上家 +2 顆（喊飛不限）。',
     matches:[
@@ -257,9 +268,9 @@ const BRACKET = [
         win:'前 2 晉級勝部第三階段', lose:'後 2 掉入敗部' },
       { id:'2-2', side:'W', name:'勝部 8 強 B 桌', format:'table4', from:'第一階段勝部晉級者',
         win:'前 2 晉級勝部第三階段', lose:'後 2 掉入敗部' },
-      { id:'2-3', side:'L', name:'敗部反向 A 桌', format:'table4', from:'勝部掉下的 4 人 + 敗部生還的 4 人',
+      { id:'2-3', side:'L', name:'敗部反向 A 桌', format:'table4', from:'勝部 8 強掉下的 4 人 + 第一階段的 4 位第 3 名',
         win:'前 2 復活', lose:'後 2 永久淘汰' },
-      { id:'2-4', side:'L', name:'敗部反向 B 桌', format:'table4', from:'勝部掉下的 4 人 + 敗部生還的 4 人',
+      { id:'2-4', side:'L', name:'敗部反向 B 桌', format:'table4', from:'勝部 8 強掉下的 4 人 + 第一階段的 4 位第 3 名',
         win:'前 2 復活', lose:'後 2 永久淘汰' },
     ],
     after:'勝部 4 人、敗部生還 4 人' },
@@ -310,8 +321,168 @@ function bracketMatch(id){
 // 只有單挑場次適用「獲勝者剩餘血格」的大小／單雙盤
 function duelMatches(){ return allBracketMatches().filter(m => m.format === 'duel'); }
 
+/* ============================================================
+   選手實力分數（第一～三屆戰績擬合）
+   ------------------------------------------------------------
+   Bradley–Terry 模型：A 對 B 單挑的勝率 = 1 / (1 + e^-(分A − 分B))。
+   四人桌把「晉級的 2 人各贏未晉級的 2 人」當成 4 組對戰（權重各 0.5，
+   因為同一桌不是獨立事件），單挑與冠亞季軍賽當成 1 組（權重 1）。
+   加上常態先驗（標準差 0.8）把分數往 0 拉，避免只打過一兩場的人分數極端。
+   第三屆最能代表現況（主辦方判斷），所以第三屆的每場比賽權重加倍。
+   分差 1.0 ≈ 勝率 73%，分差 0.5 ≈ 62%（開價時再打對折，見 RATING_WEIGHT）。
+
+   名字對照：淑明＝叔明、Gray＝Gary、偉傑＝偉杰、孟傑＝孟杰、子憔＝子樵、
+   書瑋＝書偉、王凱立＝凱立、阿傑＝阿捷（主辦方 2026-10-06 確認）。
+   韋恩與 Wei、Jimmy 與 Jimer 是不同的人。
+   ============================================================ */
+const PLAYER_RATINGS = {
+  'sean':1.26, '叔明':1.22, '小葉':1.02, '阿捷':0.99, '趙趙':0.45, '小梅':0.45, '小v':0.43,
+  '孟杰':0.37, '韋恩':0.36, '國國':0.25, '顧':0.12, '阿蒲':0.09, 'peggy':0.04, '老林':-0.13,
+  '偉杰':-0.13, 'wei':-0.14, 'jimmy':-0.21, '兔子':-0.22, '湯傑':-0.25, '吳杰':-0.25, '謬':-0.30,
+  '小羊':-0.30, '葉師傅':-0.38, '凱立':-0.42, 'jimer':-0.44, '小高':-0.53, '書偉':-0.56,
+  '保羅':-0.56, 'gary':-0.59, '訪軒':-0.76, '子樵':-0.87,
+};
+const NAME_ALIASES = {
+  '淑明':'叔明', 'gray':'gary', '偉傑':'偉杰', '孟傑':'孟杰', '子憔':'子樵', '書瑋':'書偉',
+  '王凱立':'凱立', '阿傑':'阿捷',
+};
+// 沒有歷屆紀錄的新人：只參加過一屆的人平均略低於 0，取 −0.1
+const NEW_PLAYER_RATING = -0.1;
+/* 開價時分差只算一半。回測：只用第一、二屆擬合的分數去開第三屆的盤，
+   全額採信反而比同價更糟（4-4 Sean 被分數看衰，大家卻押對了他）——
+   三屆的樣本太少，分數只能當參考，主要還是靠錢流調價。 */
+const RATING_WEIGHT = 0.5;
+
+function ratingKey(name){
+  const base = splitNickname(name).base;
+  return NAME_ALIASES[base] || base;
+}
+function playerRating(name){
+  const k = ratingKey(name);
+  return Object.prototype.hasOwnProperty.call(PLAYER_RATINGS, k) ? PLAYER_RATINGS[k] : NEW_PLAYER_RATING;
+}
+function winProbByRating(ra, rb){ return 1 / (1 + Math.exp(-RATING_WEIGHT * (ra - rb))); }
+function duelWinProb(nameA, nameB){ return winProbByRating(playerRating(nameA), playerRating(nameB)); }
+// 單挑誰獲勝的開價：兩邊各自依勝率 + 水錢換算
+function duelWinOddsPair(nameA, nameB, overround){
+  const O = (Number(overround) > 1) ? Number(overround) : DUEL_WIN_OVERROUND;
+  const p = duelWinProb(nameA, nameB);
+  return [oddsFromProb(p, O), oddsFromProb(1 - p, O)];
+}
+
+/* 模擬整個賽程 --------------------------------------------------------
+   依 BRACKET 的雙敗賽制跑 n 次，統計每位選手拿到冠軍、亞軍、季軍、
+   第四名（Bubble Guy）、敗部冠軍的機率。
+
+   · 三人桌、四人桌取前 2：Plackett–Luce，第一名依實力 e^分 加權抽，再從剩下的抽第二名
+   · 單挑：Bradley–Terry 勝率
+   · 名單順序 0~2 為 1-1 桌、3~5 為 1-2 桌……（現場「A 桌 1~3 號」的分法）
+   · 第二階段之後的分桌、配對是抽籤，模擬時隨機分
+   用固定種子的亂數，同一份名單每次算出來的賠率都一樣。
+   -------------------------------------------------------------------- */
+function seededRandom(seed){
+  let a = seed >>> 0;
+  return function(){
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function simulateTournament(names, opts){
+  opts = opts || {};
+  const n = opts.runs || 20000;
+  const rnd = seededRandom(opts.seed || 20261006);
+  const r = names.map(playerRating);
+  const s = r.map(x => Math.exp(RATING_WEIGHT * x));
+  const N = names.length;
+  const count = { champion:new Array(N).fill(0), runnerUp:new Array(N).fill(0),
+                  third:new Array(N).fill(0), bubble:new Array(N).fill(0),
+                  loserChamp:new Array(N).fill(0) };
+
+  const pickWeighted = (arr)=>{
+    let tot = 0; arr.forEach(i => tot += s[i]);
+    let x = rnd() * tot;
+    for(const i of arr){ x -= s[i]; if(x <= 0) return i; }
+    return arr[arr.length - 1];
+  };
+  // 三人桌／四人桌：回傳 [晉級 2 人, 出局]
+  const table = (arr)=>{
+    const first = pickWeighted(arr);
+    const rest = arr.filter(i => i !== first);
+    const second = pickWeighted(rest);
+    return [[first, second], rest.filter(i => i !== second)];
+  };
+  const duel = (a, b)=> rnd() < winProbByRating(r[a], r[b]) ? [a, b] : [b, a];
+  const shuffle = (arr)=>{
+    const x = arr.slice();
+    for(let i = x.length - 1; i > 0; i--){ const j = Math.floor(rnd() * (i + 1)); [x[i], x[j]] = [x[j], x[i]]; }
+    return x;
+  };
+  // 每組兩人拆到兩桌：一人去 A、一人去 B
+  const splitPairs = (pairs)=>{
+    const A = [], B = [];
+    pairs.forEach(p => { const q = shuffle(p); A.push(q[0]); B.push(q[1]); });
+    return [A, B];
+  };
+
+  for(let run = 0; run < n; run++){
+    const per = N / 4;
+    const g = [0,1,2,3].map(t => Array.from({ length: per }, (_, k) => t*per + k));
+    const t11 = table(g[0]), t12 = table(g[1]), t13 = table(g[2]), t14 = table(g[3]);
+
+    const [w21, w22] = splitPairs([t11[0], t12[0], t13[0], t14[0]]);
+    const t21 = table(w21), t22 = table(w22);
+    // 敗部反向桌：四張三人桌的第 3 名 + 8 強掉下的 4 人
+    const thirds = [t11[1][0], t12[1][0], t13[1][0], t14[1][0]];
+    const [l23, l24] = splitPairs([thirds.slice(0,2), thirds.slice(2,4), t21[1], t22[1]]);
+    const t23 = table(l23), t24 = table(l24);
+
+    const a21 = shuffle(t21[0]), a22 = shuffle(t22[0]);
+    const m31 = duel(a21[0], a22[0]), m32 = duel(a21[1], a22[1]);
+    const a23 = shuffle(t23[0]), a24 = shuffle(t24[0]);
+    const m33 = duel(a23[0], a24[0]), m34 = duel(a23[1], a24[1]);
+    const m35 = duel(m31[1], m33[0]), m36 = duel(m32[1], m34[0]);
+
+    const m41 = duel(m31[0], m32[0]);
+    const m42 = duel(m35[0], m36[0]);
+    const m43 = duel(m41[1], m42[0]);
+    let m44 = duel(m41[0], m43[0]);
+    if(m44[0] === m43[0]) m44 = duel(m41[0], m43[0]);   // 4-5 Bracket Reset
+
+    count.champion[m44[0]]++;
+    count.runnerUp[m44[1]]++;
+    count.third[m43[1]]++;
+    count.bubble[m42[1]]++;
+    count.loserChamp[m43[0]]++;
+  }
+  const out = {};
+  for(const k in count) out[k] = count[k].map(c => c / n);
+  return out;
+}
+
+// 賽前盤標題 → 模擬結果的欄位
+const PRE_MARKET_SIM_KEY = {
+  '最後總冠軍':'champion', '總亞軍':'runnerUp', '總季軍':'third',
+  'Bubble Guy':'bubble', '敗部冠軍':'loserChamp',
+};
+// 依名單算出每個賽前盤每位選手的開價：{ 標題: [odds_0 … odds_15] }
+function preMarketOdds(names, opts){
+  opts = opts || {};
+  const O = (Number(opts.overround) > 1) ? Number(opts.overround) : PRE_OVERROUND;
+  const sim = simulateTournament(names, opts);
+  const out = {};
+  for(const title in PRE_MARKET_SIM_KEY){
+    out[title] = sim[PRE_MARKET_SIM_KEY[title]].map(p =>
+      Math.min(MAX_AUTO_ODDS, oddsFromProb(p, O)));
+  }
+  return out;
+}
+
 /* 賽前盤 --------------------------------------------------------------
-   五個「從 16 人裡選一個」的盤。選項 id 用 p0~p15，標籤跟著玩家名單走，
+   五個「從 12 人裡選一個」的盤。選項 id 用 p0~p11，標籤跟著玩家名單走，
    所以之後改名單這些盤會自動顯示新名字（見 optionLabel）。
 
    第二屆是在後台一個一個手開的 —— 五個盤 × 16 個選項，很容易漏設某個上限。
@@ -333,10 +504,16 @@ function buildPreMarkets(opts){
   if(!banker) return { error: '請輸入莊家名字' };
   const odds   = (typeof opts.odds   === 'number' && opts.odds   > 1) ? opts.odds   : MULTI_ODDS;
   const priorK = (typeof opts.priorK === 'number' && opts.priorK > 0) ? opts.priorK : MULTI_PRIOR_K;
+  // 有名單就依實力模擬逐人開價，沒有就全員同價
+  const byRoster = (Array.isArray(opts.players) && opts.players.length === PLAYER_COUNT)
+    ? preMarketOdds(opts.players) : null;
 
   return { markets: PRE_MARKETS.map((m, idx)=>{
     const options = {};
-    for(let i = 0; i < PLAYER_COUNT; i++) options['p' + i] = { label:null, order:i, odds };
+    for(let i = 0; i < PLAYER_COUNT; i++){
+      const o = byRoster && byRoster[m.title] ? byRoster[m.title][i] : odds;
+      options['p' + i] = { label:null, order:i, odds: o };
+    }
     return {
       title: m.title,
       desc: m.desc(),
@@ -368,7 +545,7 @@ function buildAllDuelMarkets(opts){
   duelMatches().forEach((bm, mi)=>{
     const built = buildMatchMarkets({
       matchNo: bm.id, playerAIndex: 0, playerBIndex: 1,
-      banker, items: !!bm.items,
+      banker, items: !!bm.items, winOdds: DUEL_WIN_ODDS,
       priorK: opts.priorK, maxLiability: opts.maxLiability, bigMin: opts.bigMin,
     });
     if(built.error) return;
@@ -386,20 +563,23 @@ function buildAllDuelMarkets(opts){
   return { markets: out };
 }
 
-// 指定參賽者：把「誰獲勝」的兩個選項換成實際的兩位選手（沿用原本的賠率）
-function participantOptions(market, aIndex, bIndex){
+// 指定參賽者：把「誰獲勝」的兩個選項換成實際的兩位選手。
+// 給了名單就依兩人的實力分數開價，沒給就沿用原本的同價。
+function participantOptions(market, aIndex, bIndex, players){
   const validIdx = i => Number.isInteger(i) && i >= 0 && i < PLAYER_COUNT;
   if(!validIdx(aIndex) || !validIdx(bIndex)) return { error:'請選擇兩位參賽玩家' };
   if(aIndex === bIndex) return { error:'兩位參賽玩家不能相同' };
-  const odds = market.options.length ? market.options[0].odds : DUEL_WIN_ODDS;
+  const same = market.options.length ? market.options[0].odds : DUEL_WIN_ODDS;
+  const pair = (Array.isArray(players) && players[aIndex] != null && players[bIndex] != null)
+    ? duelWinOddsPair(players[aIndex], players[bIndex]) : [same, same];
   return { options: {
-    ['p'+aIndex]: { order:0, odds },
-    ['p'+bIndex]: { order:1, odds },
+    ['p'+aIndex]: { order:0, odds: pair[0] },
+    ['p'+bIndex]: { order:1, odds: pair[1] },
   }};
 }
 
 const CATEGORIES = [
-  { key:'multi',   label:'多選項', hint:'從 16 人名單選，例如誰奪冠、誰最先淘汰' },
+  { key:'multi',   label:'多選項', hint:'從選手名單選，例如誰奪冠、誰最先淘汰' },
   { key:'binary',  label:'雙選項', hint:'兩個選項，例如單挑誰贏、單雙、大小' },
   { key:'special', label:'特殊盤口', hint:'自由設定選項' },
 ];
@@ -561,7 +741,7 @@ function marketTotal(pools, market){
   return market.options.reduce((s,o)=> s + poolOf(pools, market.id, o.id), 0);
 }
 
-// 多選項盤才用 16 人名單，批次結算只鎖定這一類
+// 多選項盤才用選手名單，批次結算只鎖定這一類
 function usesPlayerRoster(market){ return market.category === 'multi'; }
 
 function optionLabel(state, market, opt){
@@ -744,7 +924,7 @@ function checkLiability(state, pools, market, optId, amount, oddsAtBet){
    1. 該盤標記的莊家不能在自己的盤上下注（他是對手方）
    2. 選手不能押自己參賽的場次 —— 押自己的比賽有放水疑慮
 
-   第 2 條靠「下注暱稱對得上 16 人名單」認人，所以參賽者要用真名當暱稱
+   第 2 條靠「下注暱稱對得上選手名單」認人，所以參賽者要用真名當暱稱
    （尾端的選手編號可有可無，見 sameNickname）。
    只擋他參賽的那個賽事編號底下的盤（誰獲勝、大小、單雙），
    別人的場次與總冠軍盤照常可以下注。
@@ -1152,6 +1332,10 @@ if(typeof module !== 'undefined' && module.exports){
     CATEGORIES, CATEGORY_KEYS, categoryLabel,
     PRIZE_SPLIT, BRACKET, SIDE_LABEL, allBracketMatches, bracketMatch, duelMatches,
     MAX_HP, DEFAULT_BIG_MIN, MULTI_ODDS, DUEL_WIN_ODDS, SCORE_OVERROUND,
+    DUEL_WIN_OVERROUND, PRE_OVERROUND, USE_ITEM_CARD_MODEL,
+    PLAYER_RATINGS, NAME_ALIASES, NEW_PLAYER_RATING, RATING_WEIGHT, ratingKey, playerRating,
+    winProbByRating, duelWinProb, duelWinOddsPair, seededRandom, simulateTournament,
+    PRE_MARKET_SIM_KEY, preMarketOdds,
     ITEM_CARD_Q, DUEL_PRIOR_K, DUEL_MAX_LIABILITY, MULTI_PRIOR_K, MULTI_MAX_LIABILITY,
     playerGroups, bigSmallDesc, oddEvenDesc,
     hpDistribution, hpDistributionItems, hpDist, bigSmallProbs, oddEvenProbs, oddsFromProb,
