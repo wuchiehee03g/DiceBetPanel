@@ -12,8 +12,8 @@ const section = t => console.log('\n── ' + t + ' ──');
    1. 常數與屆數
    ============================================================ */
 section('常數');
-ok(A.PLAYER_COUNT === 16, '16 位選手');
-ok(A.MULTI_ODDS === 12.80, '賽前盤開價 12.80');
+ok(A.PLAYER_COUNT === 12, '12 位選手（第四屆）');
+ok(A.MULTI_ODDS === 9.60, '賽前盤無名單時開價 9.60');
 ok(A.DUEL_WIN_ODDS === 1.85, '誰獲勝實力相當時開價 1.85');
 ok(A.DUEL_WIN_OVERROUND === 1.08, '誰獲勝抽水 8%');
 ok(A.SCORE_OVERROUND === 1.08, '大小單雙抽水 8%');
@@ -76,7 +76,9 @@ near(ovr(2.04, 1.69), 1.0819, 1e-3, '3-x 大小實際抽水 ~8.2%');
    4. 賽制表
    ============================================================ */
 section('賽制');
-ok(A.allBracketMatches().length === 21, '21 場');
+ok(A.allBracketMatches().length === 19, '19 場');
+ok(A.allBracketMatches().filter(m=>m.format==='table3').length === 4, '第一階段 4 張三人桌');
+ok(!A.bracketMatch('1-5') && !A.bracketMatch('1-6'), '第一階段沒有敗部桌');
 ok(A.duelMatches().length === 11, '11 場單挑');
 ok(A.duelMatches().filter(m=>m.items).length === 5, '第四階段 5 場有道具卡');
 ok(A.duelMatches().filter(m=>!m.items).length === 6, '第三階段 6 場無道具卡');
@@ -98,10 +100,10 @@ ok(pre.map(m=>m.title).join() === '最後總冠軍,總亞軍,總季軍,Bubble Gu
 ok(pre.every((m, i)=> m.order === i), 'order 依序 0~4');
 ok(pre.every(m=> m.category === 'multi'), '全部是 multi 分類');
 ok(pre.every(m=> m.matchNo === null), '賽前盤沒有賽事編號');
-ok(pre.every(m=> Object.keys(m.options).length === 16), '每盤 16 個選項');
+ok(pre.every(m=> Object.keys(m.options).length === 12), '每盤 12 個選項');
 ok(pre.every(m=> Object.keys(m.options).join() ===
-     Array.from({length:16}, (_, i)=>'p'+i).join()), '選項 id 是 p0~p15');
-ok(pre.every(m=> Object.values(m.options).every(o=> o.odds === A.MULTI_ODDS)), '全部開價 12.80');
+     Array.from({length:12}, (_, i)=>'p'+i).join()), '選項 id 是 p0~p11');
+ok(pre.every(m=> Object.values(m.options).every(o=> o.odds === A.MULTI_ODDS)), '全部開價 9.60');
 ok(pre.every(m=> Object.values(m.options).every(o=> o.label === null)), '標籤留空，交給名單決定');
 ok(pre.every(m=> m.priorK === A.MULTI_PRIOR_K), '黏性 100,000');
 ok(pre.every(m=> m.maxBet === A.PRE_MAX_BET && m.maxBet === 1000), '單筆上限 1,000');
@@ -142,15 +144,15 @@ section('指定參賽者');
 const fakeWin = { options:[{id:'p0', odds:1.95}, {id:'p1', odds:1.95}] };
 ok(A.participantOptions(fakeWin, 3, 3).error, '兩邊同一人要報錯');
 ok(A.participantOptions(fakeWin, -1, 2).error, '索引越界要報錯');
-ok(A.participantOptions(fakeWin, 0, 16).error, '索引超過 15 要報錯');
+ok(A.participantOptions(fakeWin, 0, 12).error, '索引超過 11 要報錯');
 const po = A.participantOptions(fakeWin, 4, 9);
 ok(Object.keys(po.options).join() === 'p4,p9', '產生 p4 / p9 兩個選項');
 ok(Object.values(po.options).every(o=> o.odds === 1.95), '沒給名單時沿用原本的賠率');
-const roster = ['小葉1','趙趙2','吳杰3','訪軒4','Sean5','叔明6','孟傑7','小羊8',
-                'Wei9','阿捷10','顧11','凱立12','國國13','書瑋14','謬15','子憔16'];
-const pr = A.participantOptions(fakeWin, 5, 15, roster);   // 叔明 vs 子憔
-ok(pr.options.p5.odds < pr.options.p15.odds, '給了名單就依實力開價：叔明較熱門');
-near(1/pr.options.p5.odds + 1/pr.options.p15.odds, A.DUEL_WIN_OVERROUND, 0.01, '兩邊合計抽水 ~8%');
+const roster = ['小葉1','趙趙2','吳杰3','Sean4','叔明5','孟傑6',
+                '阿捷7','顧8','凱立9','國國10','書瑋11','子憔12'];
+const pr = A.participantOptions(fakeWin, 4, 11, roster);   // 叔明 vs 子憔
+ok(pr.options.p4.odds < pr.options.p11.odds, '給了名單就依實力開價：叔明較熱門');
+near(1/pr.options.p4.odds + 1/pr.options.p11.odds, A.DUEL_WIN_OVERROUND, 0.01, '兩邊合計抽水 ~8%');
 
 /* ============================================================
    7b. 實力分數與賽程模擬
@@ -163,7 +165,7 @@ ok(A.playerRating('從沒來過的人') === A.NEW_PLAYER_RATING, '新人用預�
 near(A.duelWinProb('甲', '乙'), 0.5, 1e-12, '兩個新人 50/50');
 const eq = A.duelWinOddsPair('甲', '乙');
 ok(eq[0] === A.DUEL_WIN_ODDS && eq[1] === A.DUEL_WIN_ODDS, '實力相當時兩邊都是 1.85');
-const fav = A.duelWinOddsPair('叔明6', '子憔16');
+const fav = A.duelWinOddsPair('叔明5', '子憔12');
 ok(fav[0] < 1.6 && fav[1] > 2.2, `強弱懸殊時拉開賠率（叔明 ${fav[0]} / 子憔 ${fav[1]}）`);
 
 const sim = A.simulateTournament(roster, { runs: 4000 });
@@ -172,26 +174,26 @@ const sim = A.simulateTournament(roster, { runs: 4000 });
 });
 const sim2 = A.simulateTournament(roster, { runs: 4000 });
 ok(JSON.stringify(sim) === JSON.stringify(sim2), '固定種子：同一份名單結果完全相同');
-ok(sim.champion[5] > sim.champion[15] * 5, '叔明奪冠機率遠高於子憔');
+ok(sim.champion[4] > sim.champion[11] * 5, '叔明奪冠機率遠高於子憔');
 const flat = A.simulateTournament(roster.map((_, i)=>'新人' + (i+1)), { runs: 4000 });
-ok(flat.champion.every(p => p > 0.03 && p < 0.10), '全是新人時每人奪冠機率接近 1/16');
+ok(flat.champion.every(p => p > 0.05 && p < 0.12), '全是新人時每人奪冠機率接近 1/12');
 
 const po2 = A.preMarketOdds(roster, { runs: 4000 });
 ok(Object.keys(po2).length === 5, '五個賽前盤都有開價');
-ok(Object.values(po2).every(arr => arr.length === 16 && arr.every(o => o >= 1.01 && o <= A.MAX_AUTO_ODDS)),
+ok(Object.values(po2).every(arr => arr.length === 12 && arr.every(o => o >= 1.01 && o <= A.MAX_AUTO_ODDS)),
    '每個開價都在 1.01～50 之間（資料庫規則上限 50）');
-ok(po2['最後總冠軍'][5] < po2['最後總冠軍'][15], '總冠軍：叔明賠率低於子憔');
+ok(po2['最後總冠軍'][4] < po2['最後總冠軍'][11], '總冠軍：叔明賠率低於子憔');
 const champOver = po2['最後總冠軍'].reduce((s,o)=>s+1/o, 0);
 ok(champOver >= 1.25, `總冠軍盤抽水至少 25%（實得 ${((champOver-1)*100).toFixed(1)}%）`);
 
 const preR = A.buildPreMarkets({ banker:'莊家', players: roster }).markets;
-ok(preR[0].options.p5.odds !== preR[0].options.p15.odds, '給了名單的賽前盤逐人開價');
+ok(preR[0].options.p4.odds !== preR[0].options.p11.odds, '給了名單的賽前盤逐人開價');
 const preD = A.buildPreMarkets({ banker:'莊家', players: roster.map((_, i)=>'選手' + (i+1)) }).markets;
 ok(Object.values(preD[0].options).every(o => Math.abs(o.odds - A.MULTI_ODDS) < 2.5),
-   '預設名單（全是新人）時接近原本的 12.80 同價');
+   '預設名單（全是新人）時接近 9.60 同價');
 
-const mmR = A.buildMatchMarkets({ matchNo:'3-1', playerAIndex:4, playerBIndex:6, banker:'莊家', players: roster });
-ok(mmR.markets[0].options.p4.odds < mmR.markets[0].options.p6.odds, '開單場時誰獲勝依實力開價（Sean 熱門）');
+const mmR = A.buildMatchMarkets({ matchNo:'3-1', playerAIndex:3, playerBIndex:5, banker:'莊家', players: roster });
+ok(mmR.markets[0].options.p3.odds < mmR.markets[0].options.p5.odds, '開單場時誰獲勝依實力開價（Sean 熱門）');
 
 /* ============================================================
    8. 池額、賠率、結算
@@ -546,7 +548,7 @@ ok(A.esc(null) === '', 'null 跳脫成空字串');
 ok(A.fmt(1234567) === '1,234,567', '千分位');
 ok(A.uid() !== A.uid(), 'uid 不重複');
 const seed = A.seed();
-ok(seed.players[0] === '選手1' && seed.players[15] === '選手16', '種子名單 選手1~16');
+ok(seed.players[0] === '選手1' && seed.players[11] === '選手12', '種子名單 選手1~12');
 ok(seed.maxBet === 5000 && seed.schema === 3, '種子全域設定');
 
 /* ============================================================

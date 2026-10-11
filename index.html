@@ -181,7 +181,7 @@ function renderIdentity(){
     if(o.status === 'pending') pending += b.amount; else settledProfit += o.profit;
   });
   const el = document.getElementById('meStat');
-  // 如果暱稱對得上 16 人名單，就是參賽者 —— 先告知他哪些場次不能押
+  // 如果暱稱對得上選手名單，就是參賽者 —— 先告知他哪些場次不能押
   const myIdx = playerIndexByName(state, me.name);
   const barred = myIdx >= 0 ? matchNosOfPlayer(state, myIdx) : [];
   const barredNote = barred.length

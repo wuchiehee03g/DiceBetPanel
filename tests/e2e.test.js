@@ -27,9 +27,9 @@ try{
   await wipe();
 
   /* ---------- 建立全部盤口 ---------- */
-  section('建立第三屆全部盤口');
+  section('建立全部盤口');
   const players = {};
-  for(let i = 0; i < 16; i++) players[String(i)] = '選手' + (i + 1);
+  for(let i = 0; i < A.PLAYER_COUNT; i++) players[String(i)] = '選手' + (i + 1);
   const built = A.buildPreMarkets({ banker:'莊家' }).markets
     .concat(A.buildAllDuelMarkets({ banker:'莊家' }).markets);
   const markets = {};
@@ -45,9 +45,9 @@ try{
   ok(st.markets.filter(m => !m.matchNo).length === 5, '5 個賽前盤');
   ok(st.markets.filter(m => m.pendingPlayers).length === 11, '11 個誰獲勝待定');
   ok(st.markets.filter(m => m.pendingPlayers).every(m => m.locked), '待定盤全部封盤');
-  ok(st.markets.filter(m => !m.matchNo).every(m => m.options.length === 16), '賽前盤各 16 選項');
+  ok(st.markets.filter(m => !m.matchNo).every(m => m.options.length === A.PLAYER_COUNT), '賽前盤選項數 = 選手人數');
   const champ = st.markets.find(m => m.title === '最後總冠軍');
-  ok(champ && champ.options.every(o => o.odds === 12.8), '冠軍盤 16 個選項全部 12.80');
+  ok(champ && champ.options.every(o => o.odds === A.MULTI_ODDS), '預設名單的冠軍盤全員同價');
   ok(champ.desc.includes(A.TOURNAMENT_NAME), '冠軍盤說明帶當屆屆數');
 
   /* ---------- 建立基準點 ---------- */
@@ -108,8 +108,8 @@ try{
   await tryBet('合法注單 $100',          { ...b0, marketId:bsM.id, amount:100,  oddsAtBet:2.04 }, true);
   await tryBet('$5,000（全域上限）',      { ...b0, marketId:bsM.id, amount:5000, oddsAtBet:2.04 }, true);
   await tryBet('$5,001（超過上限）',      { ...b0, marketId:bsM.id, amount:5001, oddsAtBet:2.04 }, false);
-  await tryBet('賽前盤 $1,000（盤口上限）', { ...b0, marketId:champ.id, optionId:'p0', amount:1000, oddsAtBet:12.8 }, true);
-  await tryBet('賽前盤 $1,001（超過）',    { ...b0, marketId:champ.id, optionId:'p0', amount:1001, oddsAtBet:12.8 }, false);
+  await tryBet('賽前盤 $1,000（盤口上限）', { ...b0, marketId:champ.id, optionId:'p0', amount:1000, oddsAtBet:9.6 }, true);
+  await tryBet('賽前盤 $1,001（超過）',    { ...b0, marketId:champ.id, optionId:'p0', amount:1001, oddsAtBet:9.6 }, false);
   await tryBet('封盤中的待定盤',           { ...b0, marketId:pend.id, optionId:'p0', amount:100, oddsAtBet:1.95 }, false);
   await tryBet('賠率 99（超出 1.01~50）',  { ...b0, marketId:bsM.id, amount:100, oddsAtBet:99 }, false);
   await tryBet('不存在的盤口',             { ...b0, marketId:'nope', amount:100, oddsAtBet:2 }, false);
